@@ -11,6 +11,7 @@ import {
 import {
   buildPromptSnapshot,
   classifyPromptContext,
+  composeArtistPromptStack,
   formatPromptSnapshot,
   prependPromptText,
   selectSnapshotActionPrompt,
@@ -230,6 +231,20 @@ test("提示词快照包含主提示词和全部角色，格式便于复制", ()
   assert.equal(classifyPromptContext("Add Character"), "unknown");
   assert.equal(classifyPromptContext("prompt-input-box-base-prompt"), "main");
   assert.equal(classifyPromptContext("Undesired Content Prompt"), "negative");
+});
+
+test("多个画师串按最后启用优先组合，移除任意一项不会改动普通提示词", () => {
+  const trailing = "1girl, red hair";
+  assert.equal(
+    composeArtistPromptStack(["artist:new", "artist:first"], trailing),
+    "artist:new, artist:first, 1girl, red hair",
+  );
+  assert.equal(
+    composeArtistPromptStack(["artist:new"], trailing),
+    "artist:new, 1girl, red hair",
+  );
+  assert.equal(composeArtistPromptStack([], trailing), trailing);
+  assert.equal(composeArtistPromptStack(["artist:solo"], ""), "artist:solo");
 });
 
 test("可执行提示词选择不会混入快照标题，多个角色时保守拒绝", () => {

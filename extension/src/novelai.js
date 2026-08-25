@@ -35,6 +35,13 @@ function readEditorText(editor) {
   return normalizePromptText(editor.innerText || editor.textContent || "");
 }
 
+/** 读取当前可见的主提示词。没有找到编辑器时返回 null，以区别于空提示词。 */
+export function getMainPromptText(root = globalThis.document) {
+  if (!root?.querySelectorAll) return null;
+  const editor = findMainPromptEditor(root);
+  return editor ? readEditorText(editor) : null;
+}
+
 function safeMatches(element, selector) {
   try {
     return Boolean(element?.matches?.(selector));
@@ -524,6 +531,19 @@ export function prependPromptText(artistText, currentPrompt) {
   return prefix ? `${prefix}${current}` : current;
 }
 
+/**
+ * 按“最后启用的在最顶部”组合画师串与普通提示词。
+ * activePrompts 的顺序就是页面中从上到下的顺序。
+ */
+export function composeArtistPromptStack(activePrompts, trailingPrompt = "") {
+  let result = normalizePromptText(trailingPrompt);
+  const prompts = Array.isArray(activePrompts) ? activePrompts : [];
+  for (let index = prompts.length - 1; index >= 0; index -= 1) {
+    result = prependPromptText(prompts[index], result);
+  }
+  return result;
+}
+
 function alreadyStartsWithPrompt(currentPrompt, artistText) {
   const current = normalizePromptText(currentPrompt);
   const artist = normalizePromptText(artistText);
@@ -615,6 +635,56 @@ function insertPrefix(editor, prefix) {
     return insertIntoTextControl(editor, prefix);
   }
   return insertIntoContentEditable(editor, prefix);
+}
+
+function replaceTextControl(editor, value) {
+  setNativeValue(editor, value);
+  editor.focus({ preventScroll: true });
+  editor.setSelectionRange?.(0, 0);
+  dispatchInput(editor, value);
+  return true;
+}
+
+function replaceContentEditable(editor, value) {
+  const document = editor.ownerDocument;
+  editor.focus({ preventScroll: true });
+  const selection = document.getSelection?.();
+  if (!selection) return false;
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  try {
+    if (document.execCommand?.("insertText", false, value)) return true;
+  } catch {
+    // 继续使用 DOM 回退方案。
+  }
+  editor.textContent = value;
+  dispatchInput(editor, value);
+  return true;
+}
+
+function replaceEditorText(editor, value) {
+  return "value" in editor && typeof editor.value === "string"
+    ? replaceTextControl(editor, value)
+    : replaceContentEditable(editor, value);
+}
+
+/** 切换到主提示词并替换其完整内容，写入后会再次核对页面实际值。 */
+export async function setMainPromptText(text, root = globalThis.document) {
+  if (!root?.querySelectorAll) return false;
+  const value = normalizePromptText(text);
+  const document = root.ownerDocument || root;
+  const promptTab = findPromptTab(root);
+  if (promptTab && promptTab.getAttribute("aria-selected") !== "true") {
+    promptTab.click();
+    await settleDom(document);
+  }
+  const editor = await waitForMainPromptEditor(root);
+  if (!editor || !replaceEditorText(editor, value)) return false;
+  await settleDom(document);
+  const currentEditor = editor.isConnected ? editor : findMainPromptEditor(root);
+  return Boolean(currentEditor && readEditorText(currentEditor) === value);
 }
 
 /**

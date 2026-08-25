@@ -12,9 +12,11 @@ import {
 } from "./metadata.js";
 import {
   collectAllPrompts,
+  composeArtistPromptStack,
   copyText,
   formatPromptSnapshot,
-  prependArtistPrompt,
+  getMainPromptText,
+  setMainPromptText,
   selectSnapshotActionPrompt
 } from "./novelai.js";
 import { storage } from "./storage-client.js";
@@ -241,6 +243,9 @@ class GalleryPanel {
     this.pendingUiPatch = {};
     this.reloadGeneration = 0;
     this.directoryKey = null;
+    this.activeArtists = [];
+    this.artistPrefix = "";
+    this.artistPromptCheckTimer = 0;
 
     this.root = document.createElement("div");
     this.root.className = "nai-gallery-root";
@@ -321,6 +326,7 @@ class GalleryPanel {
     this.onPositionPointerMove = this.onPositionPointerMove.bind(this);
     this.onPositionPointerUp = this.onPositionPointerUp.bind(this);
     this.handleViewportResize = this.handleViewportResize.bind(this);
+    this.onPagePromptInput = this.onPagePromptInput.bind(this);
 
     this.imageObserver = typeof IntersectionObserver === "function"
       ? new IntersectionObserver((entries) => {
@@ -357,6 +363,7 @@ class GalleryPanel {
     window.addEventListener("pointerup", this.onPositionPointerUp, true);
     window.addEventListener("pointercancel", this.onPositionPointerUp, true);
     window.addEventListener("resize", this.handleViewportResize);
+    document.addEventListener("input", this.onPagePromptInput, true);
   }
 
   async init() {
@@ -688,6 +695,9 @@ class GalleryPanel {
     card.draggable = true;
     card.innerHTML = `
       <button type="button" class="nai-card-heart" data-action="favorite" aria-label="收藏" title="收藏" draggable="false">♡</button>
+      <button type="button" class="nai-card-zoom" data-action="zoom" aria-label="放大观看" title="放大观看" draggable="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m15.5 15.5 5 5"></path></svg>
+      </button>
       <button type="button" class="nai-card-edit" data-action="edit" aria-label="编辑提示词" title="编辑提示词" draggable="false">✎</button>
       <button type="button" class="nai-card-delete" data-action="delete" aria-label="删除图片" title="删除图片" draggable="false">×</button>
       <button type="button" class="nai-card-activate" aria-label="使用这张图片的提示词" draggable="false">
@@ -711,6 +721,7 @@ class GalleryPanel {
   updateCard(card, item) {
     card.dataset.favorite = String(Boolean(item.favorite));
     card.classList.toggle("is-favorite", Boolean(item.favorite));
+    card.classList.toggle("is-artist-active", item.kind === "artist" && this.activeArtists.some((entry) => entry.id === item.id));
     card.querySelector(".nai-card-heart").textContent = item.favorite ? "♥" : "♡";
     card.querySelector(".nai-card-heart").title = this.t(item.favorite ? "取消置顶" : "爱心置顶");
     card.querySelector(".nai-card-heart").setAttribute("aria-label", this.t(item.favorite ? "取消置顶" : "爱心置顶"));
@@ -871,6 +882,9 @@ class GalleryPanel {
       } else if (action === "delete") {
         const card = actionButton.closest(".nai-gallery-card");
         if (card) this.openDeleteConfirm(card.dataset.itemId);
+      } else if (action === "zoom") {
+        const card = actionButton.closest(".nai-gallery-card");
+        if (card) await this.openImageViewer(card.dataset.itemId);
       } else {
         await this.handleModalAction(action, actionButton);
       }
@@ -891,16 +905,114 @@ class GalleryPanel {
     }
     try {
       if (item.kind === "artist") {
-        const result = await prependArtistPrompt(item.actionPrompt.trim());
-        if (result === false || result?.ok === false) throw new Error(result?.error || "未能写入提示词框");
-        this.toast("画师串已添加到正向提示词顶部", "success");
+        await this.toggleArtist(item);
       } else {
         const copied = await copyText(item.actionPrompt.trim());
         if (!copied) throw new Error("浏览器未允许写入剪贴板");
-        this.toast("角色 tag 已复制到剪贴板", "success");
+        this.toast("角色tag已复制", "success");
       }
     } catch (error) {
       this.toast(error.message || "操作失败", "error");
+    }
+  }
+
+  async toggleArtist(item) {
+    const currentPrompt = getMainPromptText();
+    if (currentPrompt === null) throw new Error("未能写入提示词框");
+    if (this.activeArtists.length && !currentPrompt.startsWith(this.artistPrefix)) {
+      this.resetActiveArtists(true);
+    }
+
+    const activeIndex = this.activeArtists.findIndex((entry) => entry.id === item.id);
+    const trailingPrompt = this.artistPrefix && currentPrompt.startsWith(this.artistPrefix)
+      ? currentPrompt.slice(this.artistPrefix.length).trimStart()
+      : currentPrompt;
+    const nextArtists = activeIndex >= 0
+      ? this.activeArtists.filter((entry) => entry.id !== item.id)
+      : [{ id: item.id, prompt: item.actionPrompt.trim() }, ...this.activeArtists];
+    const nextPrompt = composeArtistPromptStack(nextArtists.map((entry) => entry.prompt), trailingPrompt);
+    const nextPrefix = nextPrompt.slice(0, Math.max(0, nextPrompt.length - trailingPrompt.length));
+    if (!await setMainPromptText(nextPrompt)) throw new Error("未能写入提示词框");
+
+    this.activeArtists = nextArtists;
+    this.artistPrefix = nextPrefix;
+    this.refreshActiveArtistCards();
+    this.toast(activeIndex >= 0 ? "画师串已禁用" : "画师串已经启用", activeIndex >= 0 ? "warning" : "success");
+  }
+
+  refreshActiveArtistCards() {
+    for (const [id, card] of this.cardNodes) {
+      card.classList.toggle("is-artist-active", this.activeArtists.some((entry) => entry.id === id));
+    }
+  }
+
+  resetActiveArtists(showToast = false) {
+    if (!this.activeArtists.length) return;
+    this.activeArtists = [];
+    this.artistPrefix = "";
+    this.refreshActiveArtistCards();
+    if (showToast) this.toast("画师串已经改变", "warning");
+  }
+
+  onPagePromptInput() {
+    if (!this.activeArtists.length) return;
+    window.clearTimeout(this.artistPromptCheckTimer);
+    this.artistPromptCheckTimer = window.setTimeout(() => {
+      const currentPrompt = getMainPromptText();
+      if (currentPrompt !== null && !currentPrompt.startsWith(this.artistPrefix)) this.resetActiveArtists(true);
+    }, 80);
+  }
+
+  async openImageViewer(id) {
+    const item = this.getItem(id);
+    if (!item) return;
+    try {
+      const cached = await this.ensureFileLoaded(item);
+      const viewerUrl = URL.createObjectURL(cached.file);
+      const viewer = document.createElement("div");
+      viewer.className = "nai-image-viewer";
+      viewer.setAttribute("role", "dialog");
+      viewer.setAttribute("aria-modal", "true");
+      viewer.setAttribute("aria-label", this.t("放大观看"));
+      viewer.innerHTML = `
+        <button type="button" class="nai-viewer-close" data-action="close-modal" aria-label="关闭">×</button>
+        <div class="nai-viewer-stage"><img draggable="false"></div>
+        <div class="nai-viewer-help">${this.t("滚轮缩放 · 按住鼠标拖动")}</div>
+      `;
+      const image = viewer.querySelector("img");
+      const stage = viewer.querySelector(".nai-viewer-stage");
+      image.src = viewerUrl;
+      image.alt = this.t(`${item.title || this.t(KINDS[item.kind])}预览`);
+      let scale = 1;
+      let x = 0;
+      let y = 0;
+      let drag = null;
+      const render = () => { image.style.transform = `translate(${x}px, ${y}px) scale(${scale})`; };
+      stage.addEventListener("wheel", (event) => {
+        event.preventDefault();
+        scale = Math.min(8, Math.max(0.5, scale * (event.deltaY < 0 ? 1.15 : 1 / 1.15)));
+        render();
+      }, { passive: false });
+      stage.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0) return;
+        drag = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, x, y };
+        stage.setPointerCapture?.(event.pointerId);
+        stage.classList.add("is-dragging");
+      });
+      stage.addEventListener("pointermove", (event) => {
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        x = drag.x + event.clientX - drag.startX;
+        y = drag.y + event.clientY - drag.startY;
+        render();
+      });
+      const endDrag = () => { drag = null; stage.classList.remove("is-dragging"); };
+      stage.addEventListener("pointerup", endDrag);
+      stage.addEventListener("pointercancel", endDrag);
+      stage.addEventListener("dblclick", () => { scale = 1; x = 0; y = 0; render(); });
+      viewer.__cleanup = () => URL.revokeObjectURL(viewerUrl);
+      this.showModal(viewer);
+    } catch (error) {
+      this.toast(error.message || "图片读取失败", "error");
     }
   }
 
@@ -1663,13 +1775,14 @@ class GalleryPanel {
   toast(message, kind = "info") {
     const toast = document.createElement("div");
     toast.className = `nai-toast is-${kind}`;
-    toast.textContent = this.t(message);
-    this.root.querySelector(".nai-toast-region").append(toast);
+    toast.innerHTML = '<span class="nai-toast-text"></span><span class="nai-toast-progress" aria-hidden="true"></span>';
+    toast.querySelector(".nai-toast-text").textContent = this.t(message);
+    this.root.querySelector(".nai-toast-region").prepend(toast);
     requestAnimationFrame(() => toast.classList.add("is-visible"));
     window.setTimeout(() => {
       toast.classList.remove("is-visible");
       window.setTimeout(() => toast.remove(), 180);
-    }, 2600);
+    }, 4800);
   }
 
   handleWindowFocus() {
@@ -1692,6 +1805,8 @@ class GalleryPanel {
     window.removeEventListener("pointerup", this.onPositionPointerUp, true);
     window.removeEventListener("pointercancel", this.onPositionPointerUp, true);
     window.removeEventListener("resize", this.handleViewportResize);
+    document.removeEventListener("input", this.onPagePromptInput, true);
+    window.clearTimeout(this.artistPromptCheckTimer);
     this.imageObserver?.disconnect();
     this.clearFileCache();
     this.root.remove();

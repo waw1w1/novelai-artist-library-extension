@@ -198,6 +198,7 @@ button {
 
 .nai-icon-button,
 .nai-card-heart,
+.nai-card-zoom,
 .nai-card-edit,
 .nai-card-delete {
   display: grid;
@@ -338,7 +339,7 @@ button {
   height: 100%;
   object-fit: cover;
   opacity: 1;
-  transition: opacity 160ms ease;
+  transition: opacity 160ms ease, filter 160ms ease;
 }
 
 .nai-gallery-card.is-loading .nai-card-media img,
@@ -362,6 +363,7 @@ button {
 }
 
 .nai-card-heart,
+.nai-card-zoom,
 .nai-card-edit,
 .nai-card-delete {
   position: absolute;
@@ -382,6 +384,22 @@ button {
   font-size: 19px;
 }
 
+.nai-card-zoom {
+  left: 43px;
+  color: #f2efa8;
+}
+
+.nai-card-zoom svg {
+  width: 24px;
+  height: 24px;
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .nai-card-edit {
   right: 43px;
   font-size: 17px;
@@ -397,14 +415,24 @@ button {
 }
 
 .nai-card-heart:hover,
+.nai-card-zoom:hover,
 .nai-card-edit:hover,
 .nai-card-delete:hover,
 .nai-card-heart:focus-visible,
+.nai-card-zoom:focus-visible,
 .nai-card-edit:focus-visible,
 .nai-card-delete:focus-visible {
   color: #24243a;
   background: var(--nai-accent);
   outline: none;
+}
+
+.nai-gallery-card.is-artist-active .nai-card-media img {
+  filter: grayscale(1);
+}
+
+.nai-gallery-card.is-artist-active {
+  border-color: rgba(242, 239, 168, 0.72);
 }
 
 .nai-card-delete:hover,
@@ -918,6 +946,8 @@ button:disabled {
 }
 
 .nai-toast {
+  position: relative;
+  overflow: hidden;
   padding: 10px 13px;
   color: white;
   text-align: center;
@@ -928,6 +958,80 @@ button:disabled {
   opacity: 0;
   transform: translateY(-8px);
   transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.nai-toast-progress {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  background: #ffe36d;
+  transform-origin: left center;
+  animation: nai-toast-progress 4.8s linear forwards;
+}
+
+@keyframes nai-toast-progress {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+
+.nai-image-viewer {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: white;
+  background: rgba(5, 7, 15, 0.94);
+}
+
+.nai-viewer-stage {
+  position: absolute;
+  inset: 48px 24px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+}
+
+.nai-viewer-stage.is-dragging { cursor: grabbing; }
+
+.nai-viewer-stage img {
+  display: block;
+  max-width: 92vw;
+  max-height: 88vh;
+  object-fit: contain;
+  transform-origin: center;
+  will-change: transform;
+  user-select: none;
+}
+
+.nai-viewer-close {
+  position: absolute;
+  top: 16px;
+  right: 18px;
+  z-index: 2;
+  width: 40px;
+  height: 40px;
+  color: white;
+  font-size: 30px;
+  line-height: 1;
+  background: rgba(20, 23, 40, 0.84);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.nai-viewer-help {
+  position: absolute;
+  bottom: 18px;
+  padding: 7px 12px;
+  color: #f2efa8;
+  background: rgba(20, 23, 40, 0.78);
+  border-radius: 999px;
+  pointer-events: none;
 }
 
 .nai-toast.is-visible {

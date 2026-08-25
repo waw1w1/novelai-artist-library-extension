@@ -11,8 +11,11 @@ It runs as an unpacked Microsoft Edge extension. No build step or companion appl
 ## Features
 
 - Two libraries: **Artist Prompts** and **Characters**.
-- Click an artist card to prepend its prompt to the main NovelAI prompt.
-- Click a character card to copy its tags to the clipboard.
+- Enable one or more artist cards as a managed prompt prefix; the most recently clicked artist is placed at the very beginning.
+- Active artist images turn grayscale and can be clicked again to disable and remove only their corresponding prompt.
+- Click a character card to copy its tags to the clipboard without changing the card color.
+- Enlarge any saved image, then zoom with the mouse wheel and pan by dragging.
+- Top-of-page notifications show newest first with a yellow countdown bar and disappear within five seconds.
 - Import local files or drag the current/history images directly from NovelAI.
 - A web image is imported only when dropped inside the extension panel; drops elsewhere remain handled by NovelAI.
 - Preserve original image bytes and existing PNG/WebP metadata without re-encoding.
@@ -173,11 +176,25 @@ The value in the saved prompt field is what will be used when the card is clicke
 
 ### Artist prompts
 
-Open the **Artist Prompt** tab and click a card. Its saved prompt is added to the beginning of the visible NovelAI main prompt. If the same prompt is already at the beginning, it is not duplicated.
+Open the **Artist Prompt** tab and click a card to enable it. The saved artist prompt is added to the beginning of the visible NovelAI main prompt, the card image turns grayscale, and an **Artist prompt enabled** notification appears.
+
+More than one artist card can be active at the same time. Active prompts are ordered from top to bottom in click order, with the most recently enabled artist at the very top. Click any grayscale card again to disable it: that card returns to full color and only its corresponding artist prompt is removed.
+
+The extension tracks the active artist prompts as a managed prefix at the beginning of the main prompt. You may freely edit the normal prompt text after this prefix, character prompts, negative prompts, and other NovelAI settings without changing the grayscale state. If any part of the managed artist prefix itself is edited, all active artist cards return to full color, an **Artist prompt changed** notification appears, and the cards can be enabled again. The extension preserves the user's edited text rather than overwriting it.
 
 ### Characters
 
 Open the **Character** tab and click a card. Its saved tags are copied to the system clipboard, ready to paste into the appropriate NovelAI character prompt field.
+
+Character cards never turn grayscale when clicked. A **Character tags copied** notification confirms a successful copy.
+
+### Enlarging images
+
+Click the magnifying-glass button immediately to the right of a card's heart button to open the full-screen image viewer. Use the mouse wheel to zoom, hold the left mouse button and drag to pan, or double-click to reset the view. Close the viewer with the `×` button or the `Esc` key.
+
+### Notifications
+
+Action notifications appear at the top of the webpage. Each notification includes a yellow progress bar that shrinks from full to empty and disappears within five seconds. When actions happen quickly, the newest notification is placed at the top and older notifications remain below it.
 
 ### Favorites and ordering
 
@@ -220,6 +237,7 @@ To restore the default lower-right position, open the extension settings and cli
 | `−` | Collapse the panel into a small floating icon |
 | Expand icon | Switch between compact and expanded layouts |
 | Heart | Favorite or unfavorite a card |
+| Magnifying glass | Open the image viewer with wheel zoom and drag-to-pan |
 | Pencil | Edit category, name, or prompt |
 | Red `×` | Permanently delete the item and its local image |
 

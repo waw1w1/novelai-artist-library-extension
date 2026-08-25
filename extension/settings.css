@@ -57,8 +57,28 @@ button {
 .page-header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 20px;
   margin-bottom: 32px;
+}
+
+.language-switcher {
+  display: grid;
+  gap: 5px;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.language-switcher select {
+  min-width: 132px;
+  height: 38px;
+  padding: 0 34px 0 11px;
+  color: var(--text);
+  background: rgba(18, 19, 31, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 9px;
 }
 
 .brand-mark {

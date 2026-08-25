@@ -1,4 +1,5 @@
 import { createGalleryPanel } from "./ui.js";
+import { LANGUAGE_STORAGE_KEY, getStoredLanguage } from "./i18n.js";
 
 const HOST_ID = "nai-prompt-gallery-host";
 let mountedApi = null;
@@ -21,7 +22,7 @@ export async function mountNovelAiGallery() {
   }
   shadow.append(style);
 
-  const api = createGalleryPanel({ host, shadow });
+  const api = createGalleryPanel({ host, shadow, language: await getStoredLanguage() });
   mountedApi = api;
 
   const isImageRoute = () => /^\/image(?:\/|$)/u.test(location.pathname);
@@ -56,11 +57,16 @@ export async function mountNovelAiGallery() {
     if (message?.type === "DIRECTORY_CHANGED" && active) api.reload({ preserveScroll: true, reloadUiState: true });
   };
   chrome.runtime.onMessage.addListener(reloadOnDirectoryChange);
+  const handleLanguageChange = (changes, areaName) => {
+    if (areaName === "local" && changes[LANGUAGE_STORAGE_KEY]) api.setLanguage(changes[LANGUAGE_STORAGE_KEY].newValue);
+  };
+  chrome.storage.onChanged.addListener(handleLanguageChange);
 
   window.addEventListener("focus", api.handleWindowFocus);
   window.addEventListener("beforeunload", () => {
     window.clearInterval(routeTimer);
     chrome.runtime.onMessage.removeListener(reloadOnDirectoryChange);
+    chrome.storage.onChanged.removeListener(handleLanguageChange);
     api.destroy();
   }, { once: true });
 

@@ -18,6 +18,7 @@ import {
   selectSnapshotActionPrompt
 } from "./novelai.js";
 import { storage } from "./storage-client.js";
+import { createTreeLocalizer, normalizeLanguage, translateMessage } from "./i18n.js";
 
 const KINDS = Object.freeze({ artist: "画师串", character: "角色" });
 const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
@@ -207,9 +208,12 @@ function setButtonBusy(button, busy, text = "保存中…") {
 }
 
 class GalleryPanel {
-  constructor({ host, shadow }) {
+  constructor({ host, shadow, language = "en" }) {
     this.host = host;
     this.shadow = shadow;
+    this.language = normalizeLanguage(language);
+    this.treeLocalizer = createTreeLocalizer();
+    this.lastStatus = { kind: "loading", text: "正在连接数据目录…" };
     this.manifest = normalizeManifest(null);
     this.status = { configured: false };
     this.activeKind = "artist";
@@ -283,6 +287,8 @@ class GalleryPanel {
       <div class="nai-toast-region" aria-live="polite"></div>
     `;
     shadow.append(this.root);
+    this.root.setAttribute("lang", this.language);
+    this.treeLocalizer.apply(this.root, this.language);
 
     this.panel = this.root.querySelector(".nai-gallery-panel");
     this.minimizedButton = this.root.querySelector(".nai-gallery-minimized");
@@ -356,6 +362,53 @@ class GalleryPanel {
   async init() {
     this.active = true;
     await this.reload({ preserveScroll: false });
+  }
+
+  t(value) {
+    return translateMessage(value, this.language);
+  }
+
+  localizePromptSnapshot(value) {
+    const text = String(value || "");
+    if (this.language === "zh-CN") return text;
+    return text
+      .replaceAll("【主提示词】", "【Main Prompt】")
+      .replace(/【角色 (\d+)】/gu, "【Character $1】")
+      .replaceAll("（未检测到可用提示词）", "(No usable prompts detected)")
+      .replaceAll("（空）", "(Empty)");
+  }
+
+  setLanguage(language) {
+    const normalized = normalizeLanguage(language);
+    if (normalized === this.language) return;
+    this.language = normalized;
+    this.root.setAttribute("lang", normalized);
+    this.treeLocalizer.apply(this.root, normalized);
+    this.renderDirectoryStatus();
+    this.renderPanelState();
+    this.reconcileCards();
+    this.setStatus(this.lastStatus.kind, this.lastStatus.text);
+    this.refreshOpenModalLanguage();
+  }
+
+  refreshOpenModalLanguage() {
+    const form = this.modalLayer.querySelector(".nai-editor-modal form");
+    if (form && this.pendingImport) {
+      const pending = this.pendingImport;
+      const usesMetadata = pending.promptResolution?.source === "metadata";
+      form.elements.snapshot.value = usesMetadata
+        ? pending.metadata?.prompt || this.t("（检测到 NovelAI metadata，但没有可识别的正向提示词）")
+        : this.localizePromptSnapshot(formatPromptSnapshot(pending.snapshot));
+      form.querySelector(".nai-section-heading strong").textContent = this.t(usesMetadata ? "图片内置 NovelAI 提示词" : "当前 NovelAI 页面提示词");
+      form.querySelector(".nai-section-heading span").textContent = this.t(usesMetadata ? "优先来源：图片 metadata" : "回退来源：当前页面");
+      form.querySelector('[data-action="copy-snapshot"]').textContent = this.t(usesMetadata ? "复制 metadata 提示词" : "复制全部");
+      form.querySelector(".nai-metadata-summary").textContent = `${this.t(pending.promptResolution?.message || "提示词来源尚未确定")} · SHA-256 ${pending.hash.slice(0, 12)}…`;
+    }
+    const deleteModal = this.modalLayer.querySelector(".nai-delete-modal");
+    const deleteItem = this.getItem(deleteModal?.dataset.itemId);
+    if (deleteModal && deleteItem) {
+      deleteModal.querySelector(".nai-delete-warning").textContent = this.t(`即将永久删除“${deleteItem.title || baseName(deleteItem.originalName)}”。删除后无法通过插件撤销。`);
+    }
   }
 
   async resume() {
@@ -451,11 +504,12 @@ class GalleryPanel {
 
   renderDirectoryStatus() {
     const name = this.status?.directoryName || this.status?.name;
-    this.pathLabel.textContent = name
+    const source = name
       ? `数据目录：${name}`
       : this.status?.needsPermission
         ? "数据目录需要重新授权"
         : "尚未选择数据目录";
+    this.pathLabel.textContent = this.t(source);
   }
 
   renderPanelState() {
@@ -463,8 +517,8 @@ class GalleryPanel {
     this.root.classList.toggle("is-minimized", this.minimized);
     this.host.style.zIndex = this.expanded && !this.minimized ? "100000" : "10000";
     this.expandButton.textContent = this.expanded ? "↙" : "⛶";
-    this.expandButton.setAttribute("aria-label", this.expanded ? "收回面板" : "展开面板");
-    this.expandButton.title = this.expanded ? "收回面板" : "展开面板";
+    this.expandButton.setAttribute("aria-label", this.t(this.expanded ? "收回面板" : "展开面板"));
+    this.expandButton.title = this.t(this.expanded ? "收回面板" : "展开面板");
     for (const button of this.root.querySelectorAll('[data-action="switch-kind"]')) {
       const selected = button.dataset.kind === this.activeKind;
       button.classList.toggle("is-active", selected);
@@ -611,14 +665,14 @@ class GalleryPanel {
     const emptyTitle = this.empty.querySelector("strong");
     const emptyText = this.empty.querySelector("p");
     if (!this.status?.configured || !this.status?.ready) {
-      emptyTitle.textContent = this.status?.configured ? "检查数据目录" : "先选择数据目录";
-      emptyText.textContent = this.status?.error || (this.status?.configured
+      emptyTitle.textContent = this.t(this.status?.configured ? "检查数据目录" : "先选择数据目录");
+      emptyText.textContent = this.t(this.status?.error || (this.status?.configured
         ? "目录需要重新授权或修复清单"
-        : "真实图片和清单会保存在你选择的文件夹中");
+        : "真实图片和清单会保存在你选择的文件夹中"));
       this.empty.querySelector("button").hidden = false;
     } else {
-      emptyTitle.textContent = `还没有${KINDS[this.activeKind]}图片`;
-      emptyText.textContent = "把图片直接拖进面板即可保存";
+      emptyTitle.textContent = this.t(`还没有${KINDS[this.activeKind]}图片`);
+      emptyText.textContent = this.t("把图片直接拖进面板即可保存");
       this.empty.querySelector("button").hidden = true;
     }
     if (this.status?.ready) {
@@ -650,6 +704,7 @@ class GalleryPanel {
     `;
     card.addEventListener("dragstart", (event) => this.onCardDragStart(event, card.dataset.itemId));
     card.addEventListener("dragend", () => this.onCardDragEnd());
+    this.treeLocalizer.apply(card, this.language);
     return card;
   }
 
@@ -657,12 +712,12 @@ class GalleryPanel {
     card.dataset.favorite = String(Boolean(item.favorite));
     card.classList.toggle("is-favorite", Boolean(item.favorite));
     card.querySelector(".nai-card-heart").textContent = item.favorite ? "♥" : "♡";
-    card.querySelector(".nai-card-heart").title = item.favorite ? "取消置顶" : "爱心置顶";
-    card.querySelector(".nai-card-heart").setAttribute("aria-label", item.favorite ? "取消置顶" : "爱心置顶");
+    card.querySelector(".nai-card-heart").title = this.t(item.favorite ? "取消置顶" : "爱心置顶");
+    card.querySelector(".nai-card-heart").setAttribute("aria-label", this.t(item.favorite ? "取消置顶" : "爱心置顶"));
     card.querySelector(".nai-card-caption strong").textContent = item.title || baseName(item.originalName);
-    const prompt = item.actionPrompt || "尚未填写提示词";
+    const prompt = item.actionPrompt || this.t("尚未填写提示词");
     card.querySelector(".nai-card-caption span").textContent = Array.from(prompt).slice(0, 120).join("");
-    card.querySelector("img").alt = `${item.title || KINDS[item.kind]}预览`;
+    card.querySelector("img").alt = this.t(`${item.title || this.t(KINDS[item.kind])}预览`);
     const badge = card.querySelector(".nai-metadata-badge");
     badge.hidden = !(item.metadata?.hasMetadata || item.hasMetadata);
   }
@@ -689,7 +744,7 @@ class GalleryPanel {
       if (!this.active || !card.isConnected) return;
       card.classList.remove("is-loading");
       card.classList.add("has-image-error");
-      card.querySelector(".nai-image-loader").textContent = "图片读取失败";
+      card.querySelector(".nai-image-loader").textContent = this.t("图片读取失败");
       console.warn("[NovelAI 提示词图库] 图片读取失败", item.id, error);
     });
   }
@@ -1231,8 +1286,8 @@ class GalleryPanel {
 
     const usesMetadata = pending.promptResolution?.source === "metadata";
     const snapshotText = usesMetadata
-      ? pending.metadata?.prompt || "（检测到 NovelAI metadata，但没有可识别的正向提示词）"
-      : formatPromptSnapshot(pending.snapshot);
+      ? pending.metadata?.prompt || this.t("（检测到 NovelAI metadata，但没有可识别的正向提示词）")
+      : this.localizePromptSnapshot(formatPromptSnapshot(pending.snapshot));
     form.innerHTML = `
       <section class="nai-prompt-snapshot">
         <div class="nai-section-heading"><strong></strong><span></span></div>
@@ -1254,9 +1309,9 @@ class GalleryPanel {
     form.elements.snapshot.value = snapshotText;
     const snapshotHeading = form.querySelector(".nai-section-heading strong");
     const snapshotDescription = form.querySelector(".nai-section-heading span");
-    snapshotHeading.textContent = usesMetadata ? "图片内置 NovelAI 提示词" : "当前 NovelAI 页面提示词";
-    snapshotDescription.textContent = usesMetadata ? "优先来源：图片 metadata" : "回退来源：当前页面";
-    form.querySelector('[data-action="copy-snapshot"]').textContent = usesMetadata ? "复制 metadata 提示词" : "复制全部";
+    snapshotHeading.textContent = this.t(usesMetadata ? "图片内置 NovelAI 提示词" : "当前 NovelAI 页面提示词");
+    snapshotDescription.textContent = this.t(usesMetadata ? "优先来源：图片 metadata" : "回退来源：当前页面");
+    form.querySelector('[data-action="copy-snapshot"]').textContent = this.t(usesMetadata ? "复制 metadata 提示词" : "复制全部");
     form.querySelector('[data-action="copy-snapshot"]').hidden = usesMetadata && !pending.metadata?.prompt;
     form.querySelector('[data-action="refresh-snapshot"]').hidden = usesMetadata;
     form.querySelector('[data-action="use-snapshot"]').hidden = usesMetadata;
@@ -1265,7 +1320,7 @@ class GalleryPanel {
     form.elements.actionPrompt.value = pending.promptResolution?.prompt || "";
     const metaSummary = form.querySelector(".nai-metadata-summary");
     metaSummary.classList.toggle("has-metadata", usesMetadata);
-    metaSummary.textContent = `${pending.promptResolution?.message || "提示词来源尚未确定"} · SHA-256 ${pending.hash.slice(0, 12)}…`;
+    metaSummary.textContent = `${this.t(pending.promptResolution?.message || "提示词来源尚未确定")} · SHA-256 ${pending.hash.slice(0, 12)}…`;
     modal.body.append(form);
     modal.footer.innerHTML = `
       <button type="button" class="nai-secondary" data-action="cancel-import">取消这张</button>
@@ -1308,7 +1363,7 @@ class GalleryPanel {
     modal.element.dataset.itemId = id;
     const warning = document.createElement("p");
     warning.className = "nai-delete-warning";
-    warning.textContent = `即将永久删除“${item.title || baseName(item.originalName)}”。删除后无法通过插件撤销。`;
+    warning.textContent = this.t(`即将永久删除“${item.title || baseName(item.originalName)}”。删除后无法通过插件撤销。`);
     modal.body.append(warning);
     modal.footer.innerHTML = `
       <button type="button" class="nai-secondary" data-action="close-modal">取消</button>
@@ -1327,8 +1382,8 @@ class GalleryPanel {
       <div class="nai-modal-body"></div>
       <footer class="nai-modal-footer"></footer>
     `;
-    element.querySelector("h2").textContent = title;
-    element.querySelector("header p").textContent = description;
+    element.querySelector("h2").textContent = this.t(title);
+    element.querySelector("header p").textContent = this.t(description);
     return {
       element,
       body: element.querySelector(".nai-modal-body"),
@@ -1340,6 +1395,7 @@ class GalleryPanel {
     if (this.modalLayer.hidden) this.modalReturnFocus = this.shadow.activeElement || document.activeElement;
     this.modalLayer.firstElementChild?.__cleanup?.();
     this.modalLayer.replaceChildren(element);
+    this.treeLocalizer.apply(element, this.language);
     this.modalLayer.hidden = false;
     this.host.style.zIndex = "100000";
     this.modalLayer.addEventListener("keydown", this.onModalKeyDown);
@@ -1413,7 +1469,7 @@ class GalleryPanel {
       const snapshot = await Promise.resolve(collectAllPrompts());
       this.pendingImport.snapshot = snapshot;
       this.pendingImport.promptResolution = resolveImportPromptSource(this.pendingImport.metadata, snapshot, this.pendingImport.kind);
-      this.modalLayer.querySelector('[name="snapshot"]').value = formatPromptSnapshot(snapshot);
+      this.modalLayer.querySelector('[name="snapshot"]').value = this.localizePromptSnapshot(formatPromptSnapshot(snapshot));
       this.toast("已重新读取当前提示词", "success");
     } else if (action === "use-snapshot") {
       const form = this.modalLayer.querySelector("form");
@@ -1445,7 +1501,7 @@ class GalleryPanel {
     const anchor = captureScrollAnchor(this.scroll);
     const operationGeneration = this.reloadGeneration;
     const operationDirectoryKey = this.directoryKey;
-    setButtonBusy(button, true, "删除中…");
+    setButtonBusy(button, true, this.t("删除中…"));
     try {
       const result = await storage.deleteItem(id);
       if (!this.isOperationCurrent(operationGeneration, operationDirectoryKey)) {
@@ -1477,7 +1533,7 @@ class GalleryPanel {
       form.elements.actionPrompt.focus();
       return;
     }
-    setButtonBusy(button, true);
+    setButtonBusy(button, true, this.t("保存中…"));
     this.showFormError(form, "");
     const anchor = captureScrollAnchor(this.scroll);
     const operationGeneration = this.reloadGeneration;
@@ -1534,7 +1590,7 @@ class GalleryPanel {
     const anchor = captureScrollAnchor(this.scroll);
     const operationGeneration = this.reloadGeneration;
     const operationDirectoryKey = this.directoryKey;
-    setButtonBusy(button, true);
+    setButtonBusy(button, true, this.t("保存中…"));
     try {
       const result = await storage.updateItem(id, {
         kind: form.elements.kind.value,
@@ -1563,7 +1619,7 @@ class GalleryPanel {
     const element = form.querySelector(".nai-form-error");
     if (!element) return;
     element.hidden = !message;
-    element.textContent = message;
+    element.textContent = this.t(message);
   }
 
   scheduleUiPersist(patch) {
@@ -1595,7 +1651,8 @@ class GalleryPanel {
   }
 
   setStatus(kind, text) {
-    this.statusLabel.textContent = text;
+    this.lastStatus = { kind, text };
+    this.statusLabel.textContent = this.t(text);
     this.statusDot.dataset.status = kind;
   }
 
@@ -1606,7 +1663,7 @@ class GalleryPanel {
   toast(message, kind = "info") {
     const toast = document.createElement("div");
     toast.className = `nai-toast is-${kind}`;
-    toast.textContent = message;
+    toast.textContent = this.t(message);
     this.root.querySelector(".nai-toast-region").append(toast);
     requestAnimationFrame(() => toast.classList.add("is-visible"));
     window.setTimeout(() => {
@@ -1648,7 +1705,7 @@ class GalleryPanel {
       card.classList.add("is-loading");
       card.classList.remove("has-image-error");
       card.querySelector("img").removeAttribute("src");
-      card.querySelector(".nai-image-loader").textContent = "正在读取…";
+      card.querySelector(".nai-image-loader").textContent = this.t("正在读取…");
     }
   }
 

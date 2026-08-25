@@ -21,6 +21,7 @@ It runs as an unpacked Microsoft Edge extension. No build step or companion appl
 - Compact and expanded gallery layouts.
 - Minimize the panel to a tiny draggable icon and freely reposition the normal panel.
 - Persist the normal-panel and minimized-icon positions across reloads and browser restarts.
+- English interface by default, with instant English/Simplified Chinese switching from extension settings.
 - Lazy image loading, limited concurrency, and an LRU cache for larger libraries.
 
 ## Requirements
@@ -95,14 +96,15 @@ If the panel does not appear, click **Reload** for the extension on `edge://exte
 The extension needs a user-approved local folder for images and the library manifest.
 
 1. Click the gear button in the gallery panel. You can also click the extension icon in the Edge toolbar.
-2. Click **Select data directory** on the settings page.
-3. Select a folder in the Windows folder picker.
+2. Use the **Language** selector at the top of Settings to switch between English and Simplified Chinese. The change is applied immediately to all open gallery panels and is remembered across browser restarts.
+3. Click **Select data directory** on the settings page.
+4. Select a folder in the Windows folder picker.
 
 Create a separate folder such as `NovelAI-Gallery`. A Git checkout may also use its ignored `data` folder. Do not select the `extension` folder.
 
-4. Allow read/write access when Edge asks for permission.
-5. Wait until the settings page reports that the folder is writable.
-6. Return to NovelAI and refresh the page if necessary.
+5. Allow read/write access when Edge asks for permission.
+6. Wait until the settings page reports that the folder is writable.
+7. Return to NovelAI and refresh the page if necessary.
 
 Edge requires the folder selection and permission to be confirmed by the user. The extension cannot silently acquire access from an absolute filesystem path.
 

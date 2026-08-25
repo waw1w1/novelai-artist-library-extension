@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "NovelAI 提示词图库",
+  "name": "NovelAI Prompt Gallery",
   "version": "0.1.0",
-  "description": "在 NovelAI 页面管理画师串和角色提示词，并保留图片原始 metadata。",
+  "description": "Manage artist prompts and character tags on NovelAI with a local image gallery that preserves original metadata.",
   "permissions": [
     "storage",
     "clipboardWrite"
@@ -39,6 +39,6 @@
   ],
   "options_page": "settings.html",
   "action": {
-    "default_title": "NovelAI 提示词图库设置"
+    "default_title": "NovelAI Prompt Gallery Settings"
   }
 }

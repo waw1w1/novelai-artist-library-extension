@@ -11,6 +11,7 @@ import {
   writeLibrary,
 } from "./src/directory-db.js";
 import { resetFloatingUiState } from "./src/core.js";
+import { createTreeLocalizer, getStoredLanguage, normalizeLanguage, setStoredLanguage, translateMessage } from "./src/i18n.js";
 
 const elements = {
   permissionBadge: document.querySelector("#permission-badge"),
@@ -26,18 +27,25 @@ const elements = {
   verifyButton: document.querySelector("#verify-directory"),
   resetPositionButton: document.querySelector("#reset-panel-position"),
   operationStatus: document.querySelector("#operation-status"),
+  languageSelector: document.querySelector("#language-selector"),
 };
 
 let currentRecord = null;
 let busy = false;
+let language = "en";
+const treeLocalizer = createTreeLocalizer();
+
+function t(value) {
+  return translateMessage(value, language);
+}
 
 function setOperationStatus(message, tone = "neutral") {
-  elements.operationStatus.textContent = message;
+  elements.operationStatus.textContent = t(message);
   elements.operationStatus.dataset.tone = tone;
 }
 
 function setPermissionBadge(label, tone = "neutral") {
-  elements.permissionBadge.textContent = label;
+  elements.permissionBadge.textContent = t(label);
   elements.permissionBadge.dataset.tone = tone;
 }
 
@@ -111,9 +119,9 @@ async function refreshView({ preserveMessage = false } = {}) {
     currentRecord = await getDirectoryRecord();
   } catch (error) {
     currentRecord = null;
-    elements.directoryName.textContent = "目录授权记录已损坏";
-    elements.directoryDetail.textContent = "请重新选择数据目录";
-    elements.chooseLabel.textContent = "重新选择目录";
+    elements.directoryName.textContent = t("目录授权记录已损坏");
+    elements.directoryDetail.textContent = t("请重新选择数据目录");
+    elements.chooseLabel.textContent = t("重新选择目录");
     setPermissionBadge("记录无效", "danger");
     if (!preserveMessage) {
       setOperationStatus(error.message || "无法读取目录授权记录", "danger");
@@ -122,9 +130,9 @@ async function refreshView({ preserveMessage = false } = {}) {
   }
 
   if (!currentRecord) {
-    elements.directoryName.textContent = "尚未选择文件夹";
-    elements.directoryDetail.textContent = "建议选择本项目中的 data 文件夹";
-    elements.chooseLabel.textContent = "选择数据目录";
+    elements.directoryName.textContent = t("尚未选择文件夹");
+    elements.directoryDetail.textContent = t("建议选择本项目中的 data 文件夹");
+    elements.chooseLabel.textContent = t("选择数据目录");
     setPermissionBadge("未设置", "neutral");
     if (!preserveMessage) {
       setOperationStatus("选择目录时，Edge 会打开 Windows 资源管理器。", "neutral");
@@ -133,11 +141,11 @@ async function refreshView({ preserveMessage = false } = {}) {
   }
 
   elements.directoryName.textContent = currentRecord.name || currentRecord.handle.name;
-  elements.chooseLabel.textContent = "更换数据目录";
+  elements.chooseLabel.textContent = t("更换数据目录");
   const selectedAt = formatDate(currentRecord.selectedAt);
-  elements.directoryDetail.textContent = selectedAt
+  elements.directoryDetail.textContent = t(selectedAt
     ? `已于 ${selectedAt} 选择 · ${LIBRARY_FILE_NAME}`
-    : `已保存目录授权 · ${LIBRARY_FILE_NAME}`;
+    : `已保存目录授权 · ${LIBRARY_FILE_NAME}`);
 
   const permission = await queryDirectoryPermission(currentRecord.handle, "readwrite");
   if (permission === "prompt") {
@@ -356,10 +364,35 @@ elements.chooseButton.addEventListener("click", chooseDirectory);
 elements.authorizeButton.addEventListener("click", authorizeDirectory);
 elements.verifyButton.addEventListener("click", verifyCurrentDirectory);
 elements.resetPositionButton.addEventListener("click", resetPanelPosition);
+elements.languageSelector.addEventListener("change", async () => {
+  language = await setStoredLanguage(elements.languageSelector.value);
+  document.documentElement.lang = language;
+  treeLocalizer.apply(document.documentElement, language);
+  await refreshView();
+});
 
-if (typeof window.showDirectoryPicker !== "function") {
-  elements.chooseButton.disabled = true;
-  setOperationStatus("当前 Edge 不支持目录选择 API，请更新到较新的桌面版 Edge。", "danger");
-} else {
-  refreshView();
+async function initializeSettings() {
+  language = await getStoredLanguage();
+  elements.languageSelector.value = language;
+  document.documentElement.lang = language;
+  treeLocalizer.apply(document.documentElement, language);
+  if (typeof window.showDirectoryPicker !== "function") {
+    elements.chooseButton.disabled = true;
+    setOperationStatus("当前 Edge 不支持目录选择 API，请更新到较新的桌面版 Edge。", "danger");
+  } else {
+    await refreshView();
+  }
 }
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "local" || !changes.uiLanguage) return;
+  const nextLanguage = normalizeLanguage(changes.uiLanguage.newValue);
+  if (nextLanguage === language) return;
+  language = nextLanguage;
+  elements.languageSelector.value = language;
+  document.documentElement.lang = language;
+  treeLocalizer.apply(document.documentElement, language);
+  void refreshView();
+});
+
+void initializeSettings();

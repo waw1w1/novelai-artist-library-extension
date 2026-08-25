@@ -1,5 +1,9 @@
 const PNG_SIGNATURE = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 const UTF8_DECODER = new TextDecoder("utf-8");
+const MAX_TEXT_BLOCK_BYTES = 1024 * 1024;
+const MAX_TOTAL_TEXT_BYTES = 4 * 1024 * 1024;
+const MAX_JSON_NODES = 10_000;
+const MAX_PROMPT_CHARACTERS = 256 * 1024;
 let UTF8_FATAL_DECODER;
 
 try {
@@ -266,7 +270,7 @@ function parseTextChunk(data, offset, length) {
 
 function parseInternationalTextChunk(data, offset, length) {
   const keywordPart = readNullTerminated(data, 0);
-  if (!keywordPart || keywordPart.next + 2 > data.length) {
+  if (!keywordPart || keywordPart.bytes.length === 0 || keywordPart.bytes.length > 79 || keywordPart.next + 2 > data.length) {
     return null;
   }
 
@@ -313,6 +317,7 @@ export function parsePngTextChunks(input) {
   const entries = [];
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let cursor = PNG_SIGNATURE.length;
+  let parsedTextBytes = 0;
 
   while (cursor + 12 <= bytes.length) {
     const length = view.getUint32(cursor, false);
@@ -327,10 +332,15 @@ export function parsePngTextChunks(input) {
     const data = bytes.subarray(dataStart, dataEnd);
     let entry = null;
 
-    if (type === "tEXt") {
-      entry = parseTextChunk(data, cursor, length);
-    } else if (type === "iTXt") {
-      entry = parseInternationalTextChunk(data, cursor, length);
+    if (type === "tEXt" || type === "iTXt") {
+      if (length > MAX_TEXT_BLOCK_BYTES || parsedTextBytes + length > MAX_TOTAL_TEXT_BYTES) {
+        entry = { container: "png", type, keyword: null, text: null, oversized: true, offset: cursor, length };
+      } else {
+        parsedTextBytes += length;
+        entry = type === "tEXt"
+          ? parseTextChunk(data, cursor, length)
+          : parseInternationalTextChunk(data, cursor, length);
+      }
     }
 
     if (entry) {
@@ -404,6 +414,9 @@ function extractJsonSubstring(value) {
 
 function parseExifTextEntries(input, container, chunkOffset = 0) {
   const source = toUint8Array(input);
+  if (source.byteLength > MAX_TEXT_BLOCK_BYTES) {
+    return [{ container, type: "EXIF", keyword: null, text: null, oversized: true, offset: chunkOffset, length: source.byteLength }];
+  }
   let tiffStart = 0;
   if (source.length >= 6 && decodeAscii(source.subarray(0, 6)) === "Exif\u0000\u0000") {
     tiffStart = 6;
@@ -609,7 +622,8 @@ function parseWebpEntries(bytes) {
         container: "webp",
         type: "XMP",
         keyword: "XML:com.adobe.xmp",
-        text: cleanText(decodeUtf8(bytes.subarray(dataStart, dataEnd)) || ""),
+        text: length <= MAX_TEXT_BLOCK_BYTES ? cleanText(decodeUtf8(bytes.subarray(dataStart, dataEnd)) || "") : null,
+        oversized: length > MAX_TEXT_BLOCK_BYTES,
         offset: cursor,
         length,
       });
@@ -659,12 +673,14 @@ function inspectJsonMetadata(root) {
   const promptCandidates = [];
   const settings = {};
   const visited = new Set();
+  let visitedNodes = 0;
 
   const visit = (value, path = [], depth = 0) => {
-    if (!value || typeof value !== "object" || depth > 8 || visited.has(value)) {
+    if (!value || typeof value !== "object" || depth > 8 || visited.has(value) || visitedNodes >= MAX_JSON_NODES) {
       return;
     }
     visited.add(value);
+    visitedNodes += 1;
 
     for (const [key, child] of Object.entries(value)) {
       const keyName = normalizedKey(key);
@@ -684,7 +700,7 @@ function inspectJsonMetadata(root) {
 
         const text = cleanText(child);
         if (score && text) {
-          promptCandidates.push({ text, score: score - depth, source: pathText });
+          promptCandidates.push({ text: Array.from(text).slice(0, MAX_PROMPT_CHARACTERS).join(""), score: score - depth, source: pathText });
         }
       }
 
@@ -799,6 +815,7 @@ function buildSummary(format, entries, prompt, settings) {
     parts.push(String(settings.sampler));
   }
   parts.push(`${entries.length} 项`);
+  if (entries.some((entry) => entry.oversized)) parts.push("部分 metadata 过大未解析");
   return parts.join(" · ");
 }
 
@@ -824,7 +841,17 @@ export function extractImageMetadata(arrayBuffer, mimeType = "") {
     format = "webp";
   }
 
-  const { prompt, settings } = extractPromptAndSettings(rawEntries);
+  let textBytes = 0;
+  rawEntries = rawEntries.map((entry) => {
+    const length = Number(entry.length) || 0;
+    if (!entry.text) return entry;
+    if (textBytes + length > MAX_TOTAL_TEXT_BYTES) return { ...entry, text: null, oversized: true };
+    textBytes += length;
+    return entry;
+  });
+  const extracted = extractPromptAndSettings(rawEntries);
+  const prompt = Array.from(extracted.prompt).slice(0, MAX_PROMPT_CHARACTERS).join("");
+  const { settings } = extracted;
   return {
     hasMetadata: rawEntries.length > 0,
     prompt,

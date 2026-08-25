@@ -242,24 +242,39 @@ function collectNovelAiSemanticPrompts(root) {
   if (!baseContainers.length && !characterContainers.length) return null;
 
   const baseEditors = baseContainers.map(firstEditorInside).filter(Boolean);
-  const mainEditor = baseEditors.find(isElementVisible) || baseEditors[0] || null;
-  const charactersByIndex = new Map();
+  let mainEditor = baseEditors.find(isElementVisible) || null;
+  if (!mainEditor) {
+    const fallbackCandidates = queryEditors(root)
+      .filter((editor) => isElementVisible(editor))
+      .map((editor) => ({ editor, kind: classifyPromptContext(collectEditorContext(editor)) }))
+      .filter(({ kind }) => kind !== "negative" && kind !== "character");
+    const explicit = fallbackCandidates.filter(({ kind }) => kind === "main");
+    const conservative = fallbackCandidates.filter(({ kind }) => kind === "unknown");
+    mainEditor = explicit[0]?.editor || (conservative.length === 1 ? conservative[0].editor : null);
+  }
+  const characterCandidates = new Map();
   for (const container of characterContainers) {
     const editor = firstEditorInside(container);
     if (!editor) continue;
     const className = String(container.className);
     const index = className.match(/prompt-input-box-character-prompts-(\d+)/u)?.[1]
       || String(charactersByIndex.size + 1);
-    const prompt = readEditorText(editor);
-    if (!prompt || charactersByIndex.has(index)) continue;
-    charactersByIndex.set(index, { label: `角色 ${index}`, prompt });
+    const candidates = characterCandidates.get(index) || [];
+    candidates.push({ editor, prompt: readEditorText(editor), visible: isElementVisible(editor) });
+    characterCandidates.set(index, candidates);
   }
+  const characters = [...characterCandidates.entries()].flatMap(([index, candidates]) => {
+    const selected = candidates.sort((left, right) =>
+      Number(right.visible) - Number(left.visible) || Number(Boolean(right.prompt)) - Number(Boolean(left.prompt))
+    ).find((candidate) => candidate.prompt);
+    return selected ? [{ label: `角色 ${index}`, prompt: selected.prompt }] : [];
+  });
 
   return {
     mainEditor,
     snapshot: buildPromptSnapshot(
       readEditorText(mainEditor),
-      [...charactersByIndex.values()].sort((left, right) => left.label.localeCompare(right.label, "zh-CN", { numeric: true })),
+      characters.sort((left, right) => left.label.localeCompare(right.label, "zh-CN", { numeric: true })),
     ),
   };
 }
@@ -291,8 +306,13 @@ export function collectAllPrompts(root = globalThis.document) {
     (candidate.kind === "main" ? 300 : candidate.kind === "unknown" ? 20 : -500) -
     candidate.domIndex;
 
-  const mainCandidate = candidates
-    .filter((candidate) => candidate.kind !== "character")
+  const explicitMainCandidates = candidates.filter((candidate) => candidate.kind === "main");
+  const unknownMainCandidates = candidates.filter(
+    (candidate) => candidate.kind === "unknown" && candidate.visible,
+  );
+  const mainCandidate = (explicitMainCandidates.length
+    ? explicitMainCandidates
+    : unknownMainCandidates.length === 1 ? unknownMainCandidates : [])
     .sort((left, right) => scoreMain(right) - scoreMain(left))[0];
 
   const characterCandidates = candidates.filter(
@@ -348,6 +368,30 @@ export function formatPromptSnapshot(snapshot) {
     sections.push(`【${character.label}】\n${character.prompt}`);
   }
   return sections.join("\n\n");
+}
+
+/** 从展示快照中选择可执行提示词，绝不把“【主提示词】”等标题写入实际提示词。 */
+export function selectSnapshotActionPrompt(snapshot, kind) {
+  const safeSnapshot = typeof snapshot === "string" ? buildPromptSnapshot(snapshot) : (snapshot || {});
+  const mainPrompt = normalizePromptText(
+    safeSnapshot.mainPrompt ?? safeSnapshot.positivePrompt ?? safeSnapshot.basePrompt ?? safeSnapshot.prompt,
+  );
+  const sourceCharacters = Array.isArray(safeSnapshot.characters)
+    ? safeSnapshot.characters
+    : Array.isArray(safeSnapshot.characterPrompts) ? safeSnapshot.characterPrompts : [];
+  const characters = sourceCharacters.map(normalizeCharacterEntry).filter((entry) => entry.prompt);
+  if (kind === "artist") {
+    return mainPrompt
+      ? { ok: true, prompt: mainPrompt }
+      : { ok: false, prompt: "", message: "当前没有可用的主提示词。" };
+  }
+  if (kind === "character" && characters.length === 1) {
+    return { ok: true, prompt: characters[0].prompt };
+  }
+  if (kind === "character" && characters.length > 1) {
+    return { ok: false, prompt: "", message: "检测到多个角色，请从上方复制需要的角色段落。" };
+  }
+  return { ok: false, prompt: "", message: "当前没有可用的角色提示词。" };
 }
 
 function promptTabLabel(element) {
@@ -418,9 +462,13 @@ function findMainPromptEditor(root) {
       ? semantic.mainEditor
       : null;
   }
-  return queryEditors(root)
+  const candidates = queryEditors(root)
     .filter((editor) => isElementVisible(editor))
-    .filter((editor) => classifyPromptContext(collectEditorContext(editor)) === "main")
+    .map((editor) => ({ editor, kind: classifyPromptContext(collectEditorContext(editor)) }))
+    .filter(({ kind }) => kind !== "negative" && kind !== "character");
+  const explicit = candidates.filter(({ kind }) => kind === "main").map(({ editor }) => editor);
+  const unknown = candidates.filter(({ kind }) => kind === "unknown").map(({ editor }) => editor);
+  return (explicit.length ? explicit : unknown.length === 1 ? unknown : [])
     .sort((left, right) => editorPositionScore(right) - editorPositionScore(left))[0] || null;
 }
 
@@ -438,7 +486,20 @@ async function settleDom(document) {
   const view = document?.defaultView || globalThis;
   await nextFrame(view);
   await nextFrame(view);
-  await new Promise((resolve) => setTimeout(resolve, 80));
+}
+
+async function waitForMainPromptEditor(root, timeoutMs = 1000) {
+  const document = root.ownerDocument || root;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    const editor = findMainPromptEditor(root);
+    if (editor && isElementVisible(editor) && !editor.disabled && !editor.readOnly) {
+      await settleDom(document);
+      if (editor.isConnected && isElementVisible(editor) && !editor.disabled && !editor.readOnly) return editor;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return null;
 }
 
 function artistPrefix(artistText, currentPrompt) {
@@ -572,11 +633,7 @@ export async function prependArtistPrompt(text, root = globalThis.document) {
     await settleDom(document);
   }
 
-  let editor = findMainPromptEditor(root);
-  if (!editor) {
-    await settleDom(document);
-    editor = findMainPromptEditor(root);
-  }
+  const editor = await waitForMainPromptEditor(root);
   if (!editor) {
     return false;
   }

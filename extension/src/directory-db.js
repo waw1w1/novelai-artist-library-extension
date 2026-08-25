@@ -409,21 +409,24 @@ function validateImageFileName(fileName) {
 export async function writeImageVerified(directoryHandle, fileName, bytes, expectedHash) {
   validateImageFileName(fileName);
   const imagesDirectory = await directoryHandle.getDirectoryHandle(IMAGES_DIRECTORY_NAME, { create: true });
-  const fileHandle = await imagesDirectory.getFileHandle(fileName, { create: true });
-  await writeBytes(fileHandle, bytes);
-
-  const writtenFile = await fileHandle.getFile();
-  const actualHash = await sha256Hex(await writtenFile.arrayBuffer());
-  if (expectedHash && actualHash !== expectedHash.toLowerCase()) {
+  let fileHandle;
+  try {
+    fileHandle = await imagesDirectory.getFileHandle(fileName, { create: true });
+    await writeBytes(fileHandle, bytes);
+    const writtenFile = await fileHandle.getFile();
+    const actualHash = await sha256Hex(await writtenFile.arrayBuffer());
+    if (expectedHash && actualHash !== expectedHash.toLowerCase()) {
+      throw new LibraryStorageError("WRITE_VERIFY_FAILED", "图片写入后的 SHA-256 校验失败");
+    }
+    return { fileHandle, file: writtenFile, sha256: actualHash };
+  } catch (error) {
     try {
       await imagesDirectory.removeEntry(fileName);
     } catch {
-      // The caller still receives the verification failure.
+      // 清理失败不应覆盖最初的写入或校验错误。
     }
-    throw new LibraryStorageError("WRITE_VERIFY_FAILED", "图片写入后的 SHA-256 校验失败");
+    throw error;
   }
-
-  return { fileHandle, file: writtenFile, sha256: actualHash };
 }
 
 export async function readImageFile(directoryHandle, fileName) {

@@ -6,6 +6,7 @@ import {
   readLibrary,
   saveDirectoryRecord,
   testWritableDirectory,
+  withLibraryReadLock,
   withLibraryWriteLock,
 } from "./src/directory-db.js";
 
@@ -154,7 +155,7 @@ async function refreshView({ preserveMessage = false } = {}) {
   setPermissionBadge("可读写", "success");
   elements.verifyButton.hidden = false;
   try {
-    const library = await readLibrary(currentRecord.handle);
+    const library = await withLibraryReadLock(() => readLibrary(currentRecord.handle));
     if (!library) {
       setPermissionBadge("需要初始化", "warning");
       if (!preserveMessage) {

@@ -14,11 +14,15 @@ import {
   collectAllPrompts,
   copyText,
   formatPromptSnapshot,
-  prependArtistPrompt
+  prependArtistPrompt,
+  selectSnapshotActionPrompt
 } from "./novelai.js";
 import { storage } from "./storage-client.js";
 
 const KINDS = Object.freeze({ artist: "画师串", character: "角色" });
+const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
+const FILE_CACHE_LIMIT = 32;
+const FILE_READ_CONCURRENCY = 4;
 
 function debounce(callback, delay) {
   let timer = 0;
@@ -41,6 +45,55 @@ function isImageFile(file) {
     ["image/png", "image/jpeg", "image/webp", "image/gif", "image/avif"].includes(file.type.toLowerCase()) ||
     /\.(png|webp|jpe?g|gif|avif)$/i.test(file.name)
   );
+}
+
+function safeDraggedImageUrl(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+  try {
+    const url = new URL(text, globalThis.location?.href || "https://novelai.net/");
+    return ["https:", "http:", "blob:", "data:"].includes(url.protocol) ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+export function extractDraggedImageUrls(dataTransfer, rememberedSource = null) {
+  const candidates = [rememberedSource?.url];
+  try {
+    const uriList = dataTransfer?.getData?.("text/uri-list") || "";
+    candidates.push(...uriList.split(/\r?\n/u).filter((line) => line && !line.startsWith("#")));
+    const html = dataTransfer?.getData?.("text/html") || "";
+    if (html) {
+      const document = new DOMParser().parseFromString(html, "text/html");
+      candidates.push(...[...document.querySelectorAll("img[src], source[srcset]")].flatMap((element) => [
+        element.getAttribute("src"),
+        element.getAttribute("srcset")?.split(",")[0]?.trim().split(/\s+/u)[0],
+      ]));
+    }
+  } catch {
+    // 某些浏览器只允许在 drop 阶段读取字符串数据；已记录的源图片仍可使用。
+  }
+  return [...new Set(candidates.map(safeDraggedImageUrl).filter(Boolean))];
+}
+
+export function draggedImageFileName(source, mimeType = "") {
+  const fallbackExtension = mimeType === "image/jpeg" ? "jpg" : mimeType.split("/")[1]?.replace(/[^a-z0-9]/giu, "") || "png";
+  const label = String(source?.name || "").trim().replace(/[\u0000-\u001f<>:"/\\|?*]/gu, "_");
+  if (label && /\.[a-z0-9]{1,10}$/iu.test(label)) return label.slice(0, 180);
+  try {
+    const pathName = decodeURIComponent(new URL(source?.url).pathname.split("/").at(-1) || "");
+    const safePathName = pathName.replace(/[\u0000-\u001f<>:"/\\|?*]/gu, "_");
+    if (safePathName && /\.[a-z0-9]{1,10}$/iu.test(safePathName)) return safePathName.slice(0, 180);
+  } catch {
+    // blob/data URL 没有可用文件名。
+  }
+  return `${label || "novelai-image"}.${fallbackExtension}`.slice(0, 180);
+}
+
+export function isPointInsideRect(clientX, clientY, rect) {
+  return clientX >= rect.left && clientX <= rect.right
+    && clientY >= rect.top && clientY <= rect.bottom;
 }
 
 function setButtonBusy(button, busy, text = "保存中…") {
@@ -67,11 +120,16 @@ class GalleryPanel {
     this.initializedState = false;
     this.cardNodes = new Map();
     this.fileCache = new Map();
+    this.inFlightFiles = new Map();
+    this.fileReadQueue = [];
+    this.activeFileReads = 0;
+    this.active = false;
     this.scrollAnchors = new Map();
     this.importQueue = [];
     this.pendingImport = null;
     this.dragState = null;
     this.dropTarget = null;
+    this.pageDragSource = null;
     this.suppressClickUntil = 0;
     this.lastFocusReload = 0;
     this.destroyed = false;
@@ -138,13 +196,27 @@ class GalleryPanel {
       const patch = this.pendingUiPatch;
       this.pendingUiPatch = {};
       this.persistUiState(patch);
-    }, 240);
+    }, 1000);
     this.handleWindowFocus = this.handleWindowFocus.bind(this);
     this.onRootClick = this.onRootClick.bind(this);
     this.onPanelDragOver = this.onPanelDragOver.bind(this);
     this.onPanelDragLeave = this.onPanelDragLeave.bind(this);
     this.onPanelDrop = this.onPanelDrop.bind(this);
     this.onWindowDragGuard = this.onWindowDragGuard.bind(this);
+    this.onWindowExternalDragCapture = this.onWindowExternalDragCapture.bind(this);
+    this.onPageImageDragStart = this.onPageImageDragStart.bind(this);
+    this.onPageDragEnd = this.onPageDragEnd.bind(this);
+    this.onModalKeyDown = this.onModalKeyDown.bind(this);
+
+    this.imageObserver = typeof IntersectionObserver === "function"
+      ? new IntersectionObserver((entries) => {
+          for (const entry of entries) {
+            if (!entry.isIntersecting || !this.active) continue;
+            const item = this.getItem(entry.target.dataset.itemId);
+            if (item) this.loadCardFile(item, entry.target);
+          }
+        }, { root: this.scroll, rootMargin: "450px 0px", threshold: 0.01 })
+      : null;
 
     this.root.addEventListener("click", this.onRootClick);
     this.filePicker.addEventListener("change", () => {
@@ -155,7 +227,6 @@ class GalleryPanel {
     this.scroll.addEventListener("scroll", () => {
       const kind = this.activeKind;
       const top = this.scroll.scrollTop;
-      this.scrollAnchors.set(kind, captureScrollAnchor(this.scroll));
       this.scheduleUiPersist({ scroll: { [kind]: top } });
     }, { passive: true });
     this.panel.addEventListener("dragover", this.onPanelDragOver);
@@ -163,14 +234,34 @@ class GalleryPanel {
     this.panel.addEventListener("drop", this.onPanelDrop);
     window.addEventListener("dragover", this.onWindowDragGuard);
     window.addEventListener("drop", this.onWindowDragGuard);
+    window.addEventListener("dragstart", this.onPageImageDragStart, true);
+    window.addEventListener("dragover", this.onWindowExternalDragCapture, true);
+    window.addEventListener("drop", this.onWindowExternalDragCapture, true);
+    window.addEventListener("dragend", this.onPageDragEnd, true);
   }
 
   async init() {
+    this.active = true;
     await this.reload({ preserveScroll: false });
   }
 
-  async reload({ preserveScroll = true } = {}) {
+  async resume() {
     if (this.destroyed) return;
+    this.active = true;
+    await this.reload({ preserveScroll: true });
+  }
+
+  suspend() {
+    if (this.destroyed) return;
+    this.active = false;
+    this.reloadGeneration += 1;
+    this.imageObserver?.disconnect();
+    this.fileReadQueue.splice(0);
+    this.clearFileCache();
+  }
+
+  async reload({ preserveScroll = true } = {}) {
+    if (this.destroyed || !this.active) return;
     const generation = ++this.reloadGeneration;
     const anchor = preserveScroll ? captureScrollAnchor(this.scroll) : null;
     const previousDirectoryKey = this.status?.selectedAt || null;
@@ -183,6 +274,7 @@ class GalleryPanel {
       this.directoryKey = nextDirectoryKey;
       if (previousDirectoryKey && nextDirectoryKey && previousDirectoryKey !== nextDirectoryKey) {
         this.clearFileCache();
+        this.clearCardNodes();
         this.initializedState = false;
       }
       if (!this.status?.configured) {
@@ -202,7 +294,7 @@ class GalleryPanel {
         return;
       }
 
-      const result = await storage.getLibrary();
+      const result = nextStatus.manifest ? { manifest: nextStatus.manifest } : await storage.getLibrary();
       if (generation !== this.reloadGeneration) return;
       this.manifest = normalizeManifest(result?.manifest ?? result);
       if (!this.initializedState) {
@@ -253,6 +345,7 @@ class GalleryPanel {
 
   renderPanelState() {
     this.root.classList.toggle("is-expanded", this.expanded);
+    this.host.style.zIndex = this.expanded ? "100000" : "10000";
     this.expandButton.textContent = this.expanded ? "↙" : "⛶";
     this.expandButton.setAttribute("aria-label", this.expanded ? "收回面板" : "展开面板");
     this.expandButton.title = this.expanded ? "收回面板" : "展开面板";
@@ -269,6 +362,13 @@ class GalleryPanel {
     for (const child of [...this.grid.children]) {
       if (!wanted.has(child.dataset.itemId)) child.remove();
     }
+    for (const [id, card] of this.cardNodes) {
+      if (Object.prototype.hasOwnProperty.call(this.manifest.items, id)) continue;
+      this.imageObserver?.unobserve(card);
+      card.remove();
+      this.cardNodes.delete(id);
+      this.evictFile(id);
+    }
 
     for (const item of items) {
       let card = this.cardNodes.get(item.id);
@@ -278,6 +378,7 @@ class GalleryPanel {
       }
       this.updateCard(card, item);
       this.grid.append(card);
+      this.imageObserver?.observe(card);
     }
 
     const hasItems = items.length > 0;
@@ -307,27 +408,21 @@ class GalleryPanel {
     card.dataset.itemId = item.id;
     card.dataset.libraryItemId = item.id;
     card.draggable = true;
-    card.tabIndex = 0;
-    card.setAttribute("role", "button");
     card.innerHTML = `
       <button type="button" class="nai-card-heart" data-action="favorite" aria-label="收藏" title="收藏" draggable="false">♡</button>
       <button type="button" class="nai-card-edit" data-action="edit" aria-label="编辑提示词" title="编辑提示词" draggable="false">✎</button>
-      <div class="nai-card-media">
-        <span class="nai-image-loader">正在读取…</span>
-        <img alt="" draggable="false">
-        <span class="nai-metadata-badge" hidden>METADATA</span>
-      </div>
-      <div class="nai-card-caption">
-        <strong></strong>
-        <span></span>
-      </div>
+      <button type="button" class="nai-card-activate" aria-label="使用这张图片的提示词" draggable="false">
+        <span class="nai-card-media">
+          <span class="nai-image-loader">正在读取…</span>
+          <img alt="" draggable="false">
+          <span class="nai-metadata-badge" hidden>METADATA</span>
+        </span>
+        <span class="nai-card-caption">
+          <strong></strong>
+          <span></span>
+        </span>
+      </button>
     `;
-    card.addEventListener("keydown", (event) => {
-      if ((event.key === "Enter" || event.key === " ") && !event.target.closest("button")) {
-        event.preventDefault();
-        this.activateItem(card.dataset.itemId);
-      }
-    });
     card.addEventListener("dragstart", (event) => this.onCardDragStart(event, card.dataset.itemId));
     card.addEventListener("dragend", () => this.onCardDragEnd());
     return card;
@@ -340,35 +435,80 @@ class GalleryPanel {
     card.querySelector(".nai-card-heart").title = item.favorite ? "取消置顶" : "爱心置顶";
     card.querySelector(".nai-card-heart").setAttribute("aria-label", item.favorite ? "取消置顶" : "爱心置顶");
     card.querySelector(".nai-card-caption strong").textContent = item.title || baseName(item.originalName);
-    card.querySelector(".nai-card-caption span").textContent = item.actionPrompt || "尚未填写提示词";
+    const prompt = item.actionPrompt || "尚未填写提示词";
+    card.querySelector(".nai-card-caption span").textContent = Array.from(prompt).slice(0, 120).join("");
     card.querySelector("img").alt = `${item.title || KINDS[item.kind]}预览`;
     const badge = card.querySelector(".nai-metadata-badge");
     badge.hidden = !(item.metadata?.hasMetadata || item.hasMetadata);
   }
 
   async hydrateVisibleFiles() {
+    if (!this.active) return;
     const items = getDisplayItems(this.manifest, this.activeKind);
-    for (const item of items) {
-      if (this.destroyed) return;
-      this.ensureFileLoaded(item).catch((error) => {
+    if (this.imageObserver) {
+      this.imageObserver.disconnect();
+      for (const item of items) {
         const card = this.cardNodes.get(item.id);
-        if (card) {
-          card.classList.remove("is-loading");
-          card.classList.add("has-image-error");
-          card.querySelector(".nai-image-loader").textContent = "图片读取失败";
-        }
-        console.warn("[NovelAI 提示词图库] 图片读取失败", item.id, error);
+        if (card) this.imageObserver.observe(card);
+      }
+      return;
+    }
+    for (const item of items.slice(0, FILE_READ_CONCURRENCY)) {
+      const card = this.cardNodes.get(item.id);
+      if (card) this.loadCardFile(item, card);
+    }
+  }
+
+  loadCardFile(item, card) {
+    this.ensureFileLoaded(item).catch((error) => {
+      if (!this.active || !card.isConnected) return;
+      card.classList.remove("is-loading");
+      card.classList.add("has-image-error");
+      card.querySelector(".nai-image-loader").textContent = "图片读取失败";
+      console.warn("[NovelAI 提示词图库] 图片读取失败", item.id, error);
+    });
+  }
+
+  runFileRead(task) {
+    return new Promise((resolve, reject) => {
+      this.fileReadQueue.push({ task, resolve, reject });
+      this.drainFileReads();
+    });
+  }
+
+  drainFileReads() {
+    while (this.active && this.activeFileReads < FILE_READ_CONCURRENCY && this.fileReadQueue.length) {
+      const entry = this.fileReadQueue.shift();
+      this.activeFileReads += 1;
+      Promise.resolve().then(entry.task).then(entry.resolve, entry.reject).finally(() => {
+        this.activeFileReads -= 1;
+        this.drainFileReads();
       });
     }
   }
 
   async ensureFileLoaded(item) {
     const existing = this.fileCache.get(item.id);
-    if (existing && (!item.sha256 || existing.sha256 === item.sha256)) return existing;
+    if (existing && (!item.sha256 || existing.sha256 === item.sha256)) {
+      this.fileCache.delete(item.id);
+      this.fileCache.set(item.id, existing);
+      return existing;
+    }
     if (existing) {
       URL.revokeObjectURL(existing.objectUrl);
       this.fileCache.delete(item.id);
     }
+    if (this.inFlightFiles.has(item.id)) return this.inFlightFiles.get(item.id);
+    const promise = this.runFileRead(() => this.fetchAndCacheFile(item));
+    this.inFlightFiles.set(item.id, promise);
+    try {
+      return await promise;
+    } finally {
+      if (this.inFlightFiles.get(item.id) === promise) this.inFlightFiles.delete(item.id);
+    }
+  }
+
+  async fetchAndCacheFile(item) {
     const generation = this.reloadGeneration;
     const directoryKey = this.directoryKey;
     const expectedSha = item.sha256 || null;
@@ -390,12 +530,29 @@ class GalleryPanel {
     const objectUrl = URL.createObjectURL(file);
     const cached = { file, objectUrl, sha256: result.sha256 || item.sha256 };
     this.fileCache.set(item.id, cached);
+    this.enforceFileCacheLimit();
     const card = this.cardNodes.get(item.id);
     if (card) {
       card.querySelector("img").src = objectUrl;
       card.classList.remove("is-loading", "has-image-error");
     }
     return cached;
+  }
+
+  enforceFileCacheLimit() {
+    while (this.fileCache.size > FILE_CACHE_LIMIT) {
+      const oldestId = this.fileCache.keys().next().value;
+      this.evictFile(oldestId);
+    }
+  }
+
+  evictFile(id) {
+    const cached = this.fileCache.get(id);
+    if (!cached) return;
+    URL.revokeObjectURL(cached.objectUrl);
+    this.fileCache.delete(id);
+    const image = this.cardNodes.get(id)?.querySelector("img");
+    if (image?.src === cached.objectUrl) image.removeAttribute("src");
   }
 
   getItem(id) {
@@ -406,6 +563,7 @@ class GalleryPanel {
     const actionButton = event.target.closest("[data-action]");
     if (actionButton) {
       const action = actionButton.dataset.action;
+      if (["favorite", "save-import", "save-edit"].includes(action) && !event.isTrusted) return;
       if (action === "pick-files") {
         this.filePicker.click();
       } else if (action === "settings") {
@@ -472,7 +630,6 @@ class GalleryPanel {
     const previousKind = this.activeKind;
     const previousTop = this.scroll.scrollTop;
     this.scrollAnchors.set(previousKind, captureScrollAnchor(this.scroll));
-    await this.persistUiState({ scroll: { [previousKind]: previousTop } });
     this.activeKind = kind;
     this.renderPanelState();
     this.reconcileCards();
@@ -482,7 +639,7 @@ class GalleryPanel {
     else this.scroll.scrollTop = Number(this.manifest.ui?.scroll?.[kind]) || 0;
     this.setStatus("ready", `${KINDS[kind]} · ${getDisplayItems(this.manifest, kind).length} 张`);
     this.hydrateVisibleFiles();
-    this.scheduleUiPersist({ activeKind: kind });
+    this.scheduleUiPersist({ activeKind: kind, scroll: { [previousKind]: previousTop } });
   }
 
   async toggleFavorite(id, button) {
@@ -509,7 +666,7 @@ class GalleryPanel {
   }
 
   onCardDragStart(event, id) {
-    if (event.target.closest("button")) {
+    if (event.target.closest(".nai-card-heart, .nai-card-edit")) {
       event.preventDefault();
       return;
     }
@@ -642,8 +799,8 @@ class GalleryPanel {
       return;
     }
     const supportedFiles = files.filter((file) => {
-      if (file.size <= 40 * 1024 * 1024) return true;
-      this.toast(`${file.name} 超过 40 MiB，无法通过当前 Edge 消息通道安全保存`, "error");
+      if (file.size <= MAX_IMAGE_BYTES) return true;
+      this.toast(`${file.name} 超过 32 MiB，无法通过当前 Edge 消息通道安全保存`, "error");
       return false;
     });
     this.importQueue.push(...supportedFiles);
@@ -655,6 +812,102 @@ class GalleryPanel {
       // 在冒泡阶段兜底防止浏览器导航；NovelAI 的目标监听器会先收到事件。
       if (!event.defaultPrevented) event.preventDefault();
     }
+  }
+
+  onPageImageDragStart(event) {
+    if (!this.active || this.host.contains(event.target)) return;
+    const path = typeof event.composedPath === "function" ? event.composedPath() : [event.target];
+    const image = path.find((node) => node instanceof HTMLImageElement)
+      || event.target?.querySelector?.("img[src]");
+    if (!image) {
+      this.pageDragSource = null;
+      return;
+    }
+    const url = safeDraggedImageUrl(image.currentSrc || image.src);
+    this.pageDragSource = url ? {
+      url,
+      name: image.getAttribute("download") || image.alt || image.title || "novelai-image",
+    } : null;
+  }
+
+  onPageDragEnd() {
+    this.pageDragSource = null;
+    this.root.classList.remove("is-file-hover");
+  }
+
+  isPointInsidePanel(event) {
+    const rect = this.panel.getBoundingClientRect();
+    return isPointInsideRect(event.clientX, event.clientY, rect);
+  }
+
+  hasExternalImagePayload(dataTransfer) {
+    const types = Array.from(dataTransfer?.types || []);
+    return Boolean(
+      this.pageDragSource
+      || types.includes("Files")
+      || types.includes("text/uri-list")
+      || types.includes("text/html")
+      || types.includes("DownloadURL"),
+    );
+  }
+
+  onWindowExternalDragCapture(event) {
+    if (!this.active || this.dragState || !this.isPointInsidePanel(event) || !this.hasExternalImagePayload(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    this.root.classList.add("is-file-hover");
+    if (event.type === "dragover") {
+      this.autoScroll(event.clientY);
+      return;
+    }
+
+    const transfer = event.dataTransfer;
+    const files = [
+      ...Array.from(transfer?.files || []),
+      ...Array.from(transfer?.items || []).map((item) => {
+        try { return item.kind === "file" ? item.getAsFile() : null; } catch { return null; }
+      }),
+    ].filter((file, index, all) => file && isImageFile(file) && all.indexOf(file) === index);
+    const source = this.pageDragSource ? { ...this.pageDragSource } : null;
+    const urls = extractDraggedImageUrls(transfer, source);
+    this.pageDragSource = null;
+    this.root.classList.remove("is-file-hover");
+    if (files.length) {
+      this.queueImportedFiles(files);
+      return;
+    }
+    void this.importDraggedPageImage(urls, source);
+  }
+
+  async importDraggedPageImage(urls, source) {
+    if (!urls.length) {
+      this.toast("没有从拖动内容中读取到图片，请尝试拖动图片本身。", "error");
+      return;
+    }
+    this.setStatus("loading", "正在读取拖入的 NovelAI 图片…");
+    let lastError = null;
+    for (const url of urls) {
+      try {
+        const response = await fetch(url, { credentials: "include", cache: "force-cache" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const blob = await response.blob();
+        const mimeType = blob.type.toLowerCase();
+        if (!mimeType.startsWith("image/")) throw new Error("响应不是图片");
+        const file = new File([blob], draggedImageFileName({ ...source, url }, mimeType), {
+          type: mimeType,
+          lastModified: Date.now(),
+        });
+        if (!isImageFile(file)) throw new Error("图片格式不受支持");
+        this.queueImportedFiles([file]);
+        this.setStatus("ready", `${KINDS[this.activeKind]} · ${getDisplayItems(this.manifest, this.activeKind).length} 张`);
+        return;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    this.setStatus("ready", `${KINDS[this.activeKind]} · ${getDisplayItems(this.manifest, this.activeKind).length} 张`);
+    this.toast(`无法读取拖入的网页图片：${lastError?.message || "未知错误"}`, "error");
   }
 
   clearDropMarkers() {
@@ -685,8 +938,12 @@ class GalleryPanel {
     const preview = document.createElement("div");
     preview.className = "nai-import-preview-row";
     const image = document.createElement("img");
-    image.src = URL.createObjectURL(file);
-    image.onload = () => URL.revokeObjectURL(image.src);
+    const previewUrl = URL.createObjectURL(file);
+    image.src = previewUrl;
+    const cleanupPreview = () => URL.revokeObjectURL(previewUrl);
+    image.addEventListener("load", cleanupPreview, { once: true });
+    image.addEventListener("error", cleanupPreview, { once: true });
+    modal.element.__cleanup = cleanupPreview;
     image.alt = file.name;
     const name = document.createElement("span");
     name.textContent = file.name;
@@ -814,13 +1071,49 @@ class GalleryPanel {
   }
 
   showModal(element) {
+    if (this.modalLayer.hidden) this.modalReturnFocus = this.shadow.activeElement || document.activeElement;
+    this.modalLayer.firstElementChild?.__cleanup?.();
     this.modalLayer.replaceChildren(element);
     this.modalLayer.hidden = false;
+    this.host.style.zIndex = "100000";
+    this.modalLayer.addEventListener("keydown", this.onModalKeyDown);
+    requestAnimationFrame(() => {
+      element.querySelector('input:not([disabled]), select:not([disabled]), textarea:not([readonly]):not([disabled]), button:not([disabled]):not([hidden])')?.focus();
+    });
   }
 
   closeModal() {
+    this.modalLayer.firstElementChild?.__cleanup?.();
+    this.modalLayer.removeEventListener("keydown", this.onModalKeyDown);
     this.modalLayer.hidden = true;
     this.modalLayer.replaceChildren();
+    this.host.style.zIndex = this.expanded ? "100000" : "10000";
+    this.modalReturnFocus?.focus?.({ preventScroll: true });
+    this.modalReturnFocus = null;
+  }
+
+  onModalKeyDown(event) {
+    if (event.key === "Escape") {
+      const closeButton = this.modalLayer.querySelector('[data-action="close-modal"]:not([hidden])');
+      if (closeButton) {
+        event.preventDefault();
+        closeButton.click();
+      }
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusable = [...this.modalLayer.querySelectorAll('button:not([disabled]):not([hidden]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+      .filter((element) => element.getClientRects().length > 0);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (event.shiftKey && this.shadow.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && this.shadow.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 
   showLoadingModal(text) {
@@ -856,7 +1149,12 @@ class GalleryPanel {
       this.toast("已重新读取当前提示词", "success");
     } else if (action === "use-snapshot") {
       const form = this.modalLayer.querySelector("form");
-      form.elements.actionPrompt.value = form.elements.snapshot.value;
+      const selection = selectSnapshotActionPrompt(this.pendingImport?.snapshot, form.elements.kind.value);
+      if (!selection.ok) {
+        this.toast(selection.message, "warning");
+        return;
+      }
+      form.elements.actionPrompt.value = selection.prompt;
       form.elements.actionPrompt.focus();
     } else if (action === "save-import") {
       await this.savePendingImport(button);
@@ -1011,6 +1309,7 @@ class GalleryPanel {
   }
 
   handleWindowFocus() {
+    if (!this.active) return;
     const now = Date.now();
     if (now - this.lastFocusReload < 800) return;
     this.lastFocusReload = now;
@@ -1021,6 +1320,11 @@ class GalleryPanel {
     this.destroyed = true;
     window.removeEventListener("dragover", this.onWindowDragGuard);
     window.removeEventListener("drop", this.onWindowDragGuard);
+    window.removeEventListener("dragstart", this.onPageImageDragStart, true);
+    window.removeEventListener("dragover", this.onWindowExternalDragCapture, true);
+    window.removeEventListener("drop", this.onWindowExternalDragCapture, true);
+    window.removeEventListener("dragend", this.onPageDragEnd, true);
+    this.imageObserver?.disconnect();
     this.clearFileCache();
     this.root.remove();
   }
@@ -1028,12 +1332,19 @@ class GalleryPanel {
   clearFileCache() {
     for (const cached of this.fileCache.values()) URL.revokeObjectURL(cached.objectUrl);
     this.fileCache.clear();
+    this.inFlightFiles.clear();
     for (const card of this.cardNodes.values()) {
       card.classList.add("is-loading");
       card.classList.remove("has-image-error");
       card.querySelector("img").removeAttribute("src");
       card.querySelector(".nai-image-loader").textContent = "正在读取…";
     }
+  }
+
+  clearCardNodes() {
+    this.imageObserver?.disconnect();
+    for (const card of this.cardNodes.values()) card.remove();
+    this.cardNodes.clear();
   }
 }
 

@@ -6,7 +6,8 @@ data/
 *.log
 
 # Test and packaging outputs.
-tests/
+tests/create-metadata-fixture.mjs
+tests/harness/
 artifacts/
 coverage/
 .playwright/
@@ -17,5 +18,6 @@ coverage/
 
 # Common local files.
 node_modules/
+.vs/
 .DS_Store
 Thumbs.db

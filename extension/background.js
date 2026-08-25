@@ -45,6 +45,10 @@ const MUTATING_TYPES = new Set([
 ]);
 
 const READING_TYPES = new Set(["GET_STATUS", "GET_LIBRARY", "GET_FILE"]);
+const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
+const MAX_TITLE_LENGTH = 100;
+const MAX_PROMPT_LENGTH = 256 * 1024;
+const MAX_METADATA_SUMMARY_LENGTH = 4 * 1024;
 
 let mutationQueue = Promise.resolve();
 
@@ -81,6 +85,14 @@ function requireString(value, field, { allowEmpty = false } = {}) {
     throw new RequestError("PAYLOAD_INVALID", `${field} 必须是字符串`);
   }
   return value;
+}
+
+export function requireBoundedString(value, field, maxLength, options) {
+  const text = requireString(value, field, options);
+  if (Array.from(text).length > maxLength) {
+    throw new RequestError("PAYLOAD_TOO_LARGE", `${field} 不能超过 ${maxLength} 个字符`);
+  }
+  return text;
 }
 
 function requireKind(value) {
@@ -120,6 +132,9 @@ function decodeBase64(base64) {
 
   const padding = cleaned.endsWith("==") ? 2 : cleaned.endsWith("=") ? 1 : 0;
   const outputLength = Math.floor((cleaned.length * 3) / 4) - padding;
+  if (outputLength > MAX_IMAGE_BYTES) {
+    throw new RequestError("IMAGE_TOO_LARGE", "图片不能超过 32 MiB");
+  }
   const output = new Uint8Array(outputLength);
   const base64ChunkSize = 4 * 16_384;
   let writeOffset = 0;
@@ -242,12 +257,23 @@ function storageFileName(id, originalName, mimeType) {
   return `${id}.${extension}`;
 }
 
-function itemForId(library, id) {
-  const item = library.items[id];
-  if (!item) {
+export function itemForId(library, id) {
+  if (!Object.prototype.hasOwnProperty.call(library.items, id)) {
     throw new RequestError("ITEM_NOT_FOUND", `未找到条目 ${id}`);
   }
-  return item;
+  return library.items[id];
+}
+
+export function normalizeMetadata(value) {
+  if (value === null || value === undefined) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new RequestError("METADATA_INVALID", "metadata 必须是对象");
+  }
+  return {
+    hasMetadata: value.hasMetadata === true,
+    prompt: requireBoundedString(value.prompt ?? "", "metadata.prompt", MAX_PROMPT_LENGTH, { allowEmpty: true }),
+    summary: requireBoundedString(value.summary ?? "", "metadata.summary", MAX_METADATA_SUMMARY_LENGTH, { allowEmpty: true }),
+  };
 }
 
 async function requireLibraryDirectory() {
@@ -328,6 +354,7 @@ async function getStatus() {
     status.itemCount = Object.keys(library.items).length;
     status.artistCount = Object.values(library.items).filter((item) => item.kind === "artist").length;
     status.characterCount = status.itemCount - status.artistCount;
+    status.manifest = library;
     return status;
   } catch (error) {
     status.code = error.code || "LIBRARY_READ_FAILED";
@@ -392,7 +419,7 @@ function normalizedImportPayload(payload) {
 async function importItem(payload) {
   const input = normalizedImportPayload(payload);
   const kind = requireKind(input.kind);
-  const actionPrompt = requireString(input.actionPrompt, "actionPrompt", { allowEmpty: true });
+  const actionPrompt = requireBoundedString(input.actionPrompt, "actionPrompt", MAX_PROMPT_LENGTH, { allowEmpty: true });
   const parsed = parseDataUrl(input.dataUrl, input.mimeType);
   const detectedMimeType = detectedImageMimeType(parsed.bytes);
   if (!detectedMimeType) {
@@ -411,7 +438,11 @@ async function importItem(payload) {
   const imageFile = storageFileName(id, originalName, mimeType);
   const now = new Date().toISOString();
   const fallbackTitle = originalName.replace(/\.[^.]+$/, "") || (kind === "artist" ? "未命名画师串" : "未命名角色");
-  const title = typeof input.title === "string" && input.title.trim() ? input.title.trim() : fallbackTitle;
+  const title = requireBoundedString(
+    typeof input.title === "string" && input.title.trim() ? input.title.trim() : fallbackTitle,
+    "title",
+    MAX_TITLE_LENGTH,
+  );
   const item = {
     id,
     kind,
@@ -423,7 +454,7 @@ async function importItem(payload) {
     imagePath: `${IMAGES_DIRECTORY_NAME}/${imageFile}`,
     imageFile,
     sha256: computedHash,
-    metadata: input.metadata,
+    metadata: normalizeMetadata(input.metadata),
     favorite: false,
     favoriteAt: null,
     createdAt: now,
@@ -473,14 +504,14 @@ async function updateItem(payload) {
   }
 
   if (changes.title !== undefined) {
-    item.title = requireString(changes.title, "title").trim();
+    item.title = requireBoundedString(changes.title, "title", MAX_TITLE_LENGTH).trim();
   }
   const nextPrompt = changes.actionPrompt ?? changes.prompt ?? changes.tags;
   if (nextPrompt !== undefined) {
-    item.actionPrompt = requireString(nextPrompt, "actionPrompt", { allowEmpty: true });
+    item.actionPrompt = requireBoundedString(nextPrompt, "actionPrompt", MAX_PROMPT_LENGTH, { allowEmpty: true });
   }
   if (changes.metadata !== undefined) {
-    item.metadata = changes.metadata;
+    item.metadata = normalizeMetadata(changes.metadata);
   }
   item.updatedAt = new Date().toISOString();
 
@@ -650,22 +681,34 @@ async function reorderItems(payload) {
   return { orders: manifest.orders, manifest };
 }
 
-function mergeJsonState(base, patch) {
+export function validateUiPatch(patch) {
   if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
     throw new RequestError("UI_STATE_INVALID", "UI 状态必须是对象");
   }
-  const output = { ...base };
-  for (const [key, value] of Object.entries(patch)) {
-    if (key === "__proto__" || key === "constructor" || key === "prototype") {
-      continue;
+  const unknownKeys = Object.keys(patch).filter((key) => !["activeKind", "expanded", "scroll"].includes(key));
+  if (unknownKeys.length) {
+    throw new RequestError("UI_STATE_INVALID", `不支持的 UI 状态字段：${unknownKeys.join(", ")}`);
+  }
+  const output = {};
+  if (patch.activeKind !== undefined) output.activeKind = requireKind(patch.activeKind);
+  if (patch.expanded !== undefined) {
+    if (typeof patch.expanded !== "boolean") throw new RequestError("UI_STATE_INVALID", "expanded 必须是布尔值");
+    output.expanded = patch.expanded;
+  }
+  if (patch.scroll !== undefined) {
+    if (!patch.scroll || typeof patch.scroll !== "object" || Array.isArray(patch.scroll)) {
+      throw new RequestError("UI_STATE_INVALID", "scroll 必须是对象");
     }
-    if (value && typeof value === "object" && !Array.isArray(value)) {
-      output[key] = mergeJsonState(
-        output[key] && typeof output[key] === "object" && !Array.isArray(output[key]) ? output[key] : {},
-        value,
-      );
-    } else if (["string", "number", "boolean"].includes(typeof value) || value === null) {
-      output[key] = value;
+    const unknownScrollKeys = Object.keys(patch.scroll).filter((key) => key !== "artist" && key !== "character");
+    if (unknownScrollKeys.length) throw new RequestError("UI_STATE_INVALID", "scroll 只允许 artist 和 character");
+    output.scroll = {};
+    for (const kind of ["artist", "character"]) {
+      if (patch.scroll[kind] === undefined) continue;
+      const value = Number(patch.scroll[kind]);
+      if (!Number.isFinite(value) || value < 0 || value > 10_000_000) {
+        throw new RequestError("UI_STATE_INVALID", `scroll.${kind} 必须是合理的非负数`);
+      }
+      output.scroll[kind] = value;
     }
   }
   return output;
@@ -674,7 +717,12 @@ function mergeJsonState(base, patch) {
 async function setUiState(payload) {
   const patch = payload.patch || payload.ui || payload.changes || payload;
   const { directoryHandle, library } = await requireLibrary();
-  library.ui = mergeJsonState(library.ui, patch);
+  const safePatch = validateUiPatch(patch);
+  library.ui = {
+    ...(library.ui || {}),
+    ...safePatch,
+    ...(safePatch.scroll ? { scroll: { ...(library.ui?.scroll || {}), ...safePatch.scroll } } : {}),
+  };
   const manifest = await writeLibrary(directoryHandle, library);
   return { ui: manifest.ui };
 }
@@ -737,6 +785,10 @@ async function dispatchRequest(request) {
       throw new RequestError("REQUEST_UNKNOWN", `不支持的请求类型：${type || "(空)"}`);
   }
 }
+
+chrome.action.onClicked.addListener(() => {
+  void chrome.runtime.openOptionsPage();
+});
 
 function errorResponse(error) {
   let code = error?.code || "UNEXPECTED_ERROR";

@@ -1,17 +1,18 @@
 import { createGalleryPanel } from "./ui.js";
 
 const HOST_ID = "nai-prompt-gallery-host";
+let mountedApi = null;
 
 export async function mountNovelAiGallery() {
   const existing = document.getElementById(HOST_ID);
-  if (existing) return existing.__naiGalleryApi;
+  if (existing) return mountedApi;
 
   const host = document.createElement("div");
   host.id = HOST_ID;
-  host.style.cssText = "all:initial;position:fixed;inset:0;pointer-events:none;z-index:2147483646;";
+  host.style.cssText = "all:initial;position:fixed;inset:0;pointer-events:none;z-index:10000;";
   document.documentElement.append(host);
 
-  const shadow = host.attachShadow({ mode: "open" });
+  const shadow = host.attachShadow({ mode: "closed" });
   const style = document.createElement("style");
   try {
     style.textContent = await fetch(chrome.runtime.getURL("panel.css")).then((response) => response.text());
@@ -21,23 +22,38 @@ export async function mountNovelAiGallery() {
   shadow.append(style);
 
   const api = createGalleryPanel({ host, shadow });
-  host.__naiGalleryApi = api;
+  mountedApi = api;
 
-  const syncRouteVisibility = () => {
-    host.style.display = location.pathname.startsWith("/image") ? "block" : "none";
+  const isImageRoute = () => /^\/image(?:\/|$)/u.test(location.pathname);
+  let active = false;
+  let initialized = false;
+  const syncRouteLifecycle = async () => {
+    const nextActive = isImageRoute();
+    host.style.display = nextActive ? "block" : "none";
+    if (nextActive === active) return;
+    active = nextActive;
+    if (active) {
+      if (!initialized) {
+        initialized = true;
+        await api.init();
+      } else {
+        await api.resume();
+      }
+    } else {
+      api.suspend();
+    }
   };
-  syncRouteVisibility();
 
   let lastUrl = location.href;
   const routeTimer = window.setInterval(() => {
     if (lastUrl !== location.href) {
       lastUrl = location.href;
-      syncRouteVisibility();
+      void syncRouteLifecycle();
     }
   }, 750);
 
   const reloadOnDirectoryChange = (message) => {
-    if (message?.type === "DIRECTORY_CHANGED") api.reload({ preserveScroll: true });
+    if (message?.type === "DIRECTORY_CHANGED" && active) api.reload({ preserveScroll: true });
   };
   chrome.runtime.onMessage.addListener(reloadOnDirectoryChange);
 
@@ -48,6 +64,6 @@ export async function mountNovelAiGallery() {
     api.destroy();
   }, { once: true });
 
-  await api.init();
+  await syncRouteLifecycle();
   return api;
 }

@@ -1,46 +1,290 @@
-# NovelAI 提示词图库
+# NovelAI Prompt Gallery
 
-这是一个可直接加载到 Microsoft Edge 的 Manifest V3 扩展。它会在 NovelAI 图像生成页右下角显示图库面板，用图片管理画师串和角色 tag。
+[English](README.md) | [简体中文](README.zh-CN.md)
 
-## 安装
+A local image-based prompt library for the NovelAI image generation page. The extension adds a gallery panel to NovelAI so you can organize and reuse artist prompts and character tags through visual references.
 
-1. 在 Edge 地址栏打开 `edge://extensions/`。
-2. 打开右上角的“开发人员模式”。
-3. 点击“加载解压缩的扩展”，选择本项目的 `extension` 文件夹。
-4. 打开或刷新 `https://novelai.net/image`。
-5. 点击面板右上角的齿轮，在设置页点击“选择数据目录”，建议选择本项目的 `data` 文件夹。
+It runs as an unpacked Microsoft Edge extension. No build step or companion application is required, and your images and prompts remain in a local folder selected by you.
 
-首次选择目录必须由用户在 Windows 资源管理器中确认，这是 Edge 对本地文件访问的安全要求。扩展不能根据绝对路径静默获得权限。
+> This is an independent project and is not affiliated with or endorsed by NovelAI.
 
-## 使用
+## Features
 
-- “画师串”图库：点击图片，把保存的画师串插到 NovelAI 正向提示词最前面。
-- “角色”图库：点击图片，把保存的角色 tag 复制到剪贴板。
-- 点击右上角展开按钮可在紧凑面板和大面板之间切换。
-- 将图片拖进面板，先选择“画师串”或“角色”，再从当前 NovelAI 提示词中复制需要的内容并保存。
-- 每张卡片左上角是爱心置顶，右上角是编辑。卡片可在自己的收藏/普通分区内拖动排序。
-- 将卡片拖回 NovelAI，可把原始图片文件重新交给页面读取。
+- Two libraries: **Artist Prompts** and **Characters**.
+- Click an artist card to prepend its prompt to the main NovelAI prompt.
+- Click a character card to copy its tags to the clipboard.
+- Import local files or drag the current/history images directly from NovelAI.
+- A web image is imported only when dropped inside the extension panel; drops elsewhere remain handled by NovelAI.
+- Preserve original image bytes and existing PNG/WebP metadata without re-encoding.
+- Verify imported files with SHA-256 before and after writing.
+- Favorite, reorder, rename, recategorize, and edit saved prompts.
+- Compact and expanded gallery layouts.
+- Lazy image loading, limited concurrency, and an LRU cache for larger libraries.
 
-## 数据与 metadata
+## Requirements
 
-所选目录内会生成：
+- Microsoft Edge on Windows.
+- Access to the [NovelAI](https://novelai.net/) image generation page.
+- Either a release package or a Git checkout of this repository.
+- A local folder in which the gallery data can be stored.
 
-```text
-data/
-├─ library.json   # 提示词、类型、收藏、排序和面板状态
-└─ images/        # 未重编码的原始图片
+## Installation
+
+This project is installed through Edge's **Load unpacked** feature. Choose either the release package or Git method below.
+
+> **A ZIP file cannot be selected directly.** Despite the name “Load unpacked,” Edge requires an extracted directory whose root directly contains `manifest.json`.
+
+### Option A: install from Releases (recommended)
+
+1. Open the [Releases page](https://github.com/waw1w1/novelai-artist-library-extension/releases).
+2. Open the newest release and download the asset named similar to:
+
+   ```text
+   novelai-prompt-gallery-v0.1.0-edge.zip
+   ```
+
+3. Right-click the downloaded ZIP and select **Extract All**.
+4. Open the extracted directory and confirm that `manifest.json` is directly inside it.
+5. Use that extracted directory when Edge asks you to select the unpacked extension.
+
+The release package contains only the files required by the extension. Its archive root is already arranged for **Load unpacked**.
+
+### Option B: install with Git clone
+
+Run:
+
+```powershell
+git clone https://github.com/waw1w1/novelai-artist-library-extension.git
+cd novelai-artist-library-extension
 ```
 
-导入图片时会记录并复验 SHA-256。编辑提示词只改 `library.json`，不会改写图片。只要源图片本身含 NovelAI metadata，保存和拖出时就会完整保留；通过截图、剪贴板或右键另存得到且本来就没有 metadata 的图片，扩展无法凭空恢复 metadata。
+The extension is now in the `extension` subdirectory. Use that `extension` directory when Edge asks you to select the unpacked extension.
 
-单张图片目前限制为 40 MiB，以避开旧版 Chromium 扩展消息通道的 64 MiB 上限。
+### Load the prepared directory in Edge
 
-## 本地检查
+1. Open the following address in Edge:
 
-项目不需要安装依赖：
+   ```text
+   edge://extensions/
+   ```
+
+2. Enable **Developer mode**.
+3. Click **Load unpacked**.
+4. Select the correct directory:
+
+   - Releases installation: select the extracted directory containing `manifest.json`.
+   - Git installation: select `novelai-artist-library-extension/extension`.
+
+   > Select the directory itself—not the ZIP, repository root, or `manifest.json` file.
+
+5. Confirm that **NovelAI Prompt Gallery** appears in the extension list.
+6. Open or refresh:
+
+   ```text
+   https://novelai.net/image
+   ```
+
+7. The gallery panel should appear in the lower-right corner of the page.
+
+If the panel does not appear, click **Reload** for the extension on `edge://extensions/`, then refresh NovelAI.
+
+## First-time setup
+
+The extension needs a user-approved local folder for images and the library manifest.
+
+1. Click the gear button in the gallery panel. You can also click the extension icon in the Edge toolbar.
+2. Click **Select data directory** on the settings page.
+3. Select a folder in the Windows folder picker.
+
+Create a separate folder such as `NovelAI-Gallery`. A Git checkout may also use its ignored `data` folder. Do not select the `extension` folder.
+
+4. Allow read/write access when Edge asks for permission.
+5. Wait until the settings page reports that the folder is writable.
+6. Return to NovelAI and refresh the page if necessary.
+
+Edge requires the folder selection and permission to be confirmed by the user. The extension cannot silently acquire access from an absolute filesystem path.
+
+## Data layout
+
+The selected directory contains:
+
+```text
+Selected folder/
+├─ library.json   # Prompts, categories, favorites, ordering, and UI state
+└─ images/        # Original image files
+```
+
+Back up the entire folder to preserve the library. To move the library to another computer, copy the folder and select it again from the extension settings page. Uninstalling the extension does not intentionally delete this folder.
+
+## Importing images
+
+### From your computer
+
+1. Click the `＋` button in the panel.
+2. Select one or more images.
+3. Choose **Artist Prompt** or **Character** for each image.
+4. Review the name and saved prompt.
+5. Click **Save**.
+
+You can also drag files from Windows File Explorer directly into the panel.
+
+### From the NovelAI page
+
+Drag either of these directly into the extension panel:
+
+- the current generated image in the center;
+- an image from the history area.
+
+The extension intercepts the drop only while the pointer is inside the panel. Dropping on the NovelAI canvas, history, or another page area continues to use NovelAI's normal behavior.
+
+For web images, the extension retrieves the original image response instead of recreating it through Canvas. If an image URL has expired, authentication is no longer valid, or the browser blocks access, the panel displays an error. Saving the image locally and importing the file is the fallback.
+
+## Saving prompts
+
+The import editor can show:
+
+- the current main NovelAI prompt;
+- the current character prompts;
+- a prompt extracted from image metadata;
+- a short SHA-256 digest.
+
+The `【Main Prompt】` and `【Character 1】`-style labels in the snapshot are display headings only; they are never saved as executable prompt text.
+
+When **Fill below** is used:
+
+- **Artist Prompt:** only the current main prompt is inserted.
+- **Character** with exactly one character prompt: only that character prompt is inserted.
+- **Character** with multiple character prompts: nothing is merged automatically; select and copy the required character section manually.
+
+The value in the saved prompt field is what will be used when the card is clicked later.
+
+## Using the gallery
+
+### Artist prompts
+
+Open the **Artist Prompt** tab and click a card. Its saved prompt is added to the beginning of the visible NovelAI main prompt. If the same prompt is already at the beginning, it is not duplicated.
+
+### Characters
+
+Open the **Character** tab and click a card. Its saved tags are copied to the system clipboard, ready to paste into the appropriate NovelAI character prompt field.
+
+### Favorites and ordering
+
+- Click the heart button to favorite or unfavorite an item.
+- Favorite and normal items are sorted separately.
+- Drag a card within its own section to reorder it.
+- Cross-section ordering is intentionally rejected.
+
+### Editing
+
+Click the pencil button on a card to edit its category, display name, or saved prompt. Editing changes only `library.json`; it does not modify or re-encode the image.
+
+### Dragging an image back to NovelAI
+
+Drag a gallery card to a NovelAI image target to pass the saved original file back to the page. Any metadata originally present in that file remains intact.
+
+## Panel controls
+
+| Control | Action |
+| --- | --- |
+| `＋` | Import images from the computer |
+| Gear | Open data directory settings |
+| Expand icon | Switch between compact and expanded layouts |
+| Heart | Favorite or unfavorite a card |
+| Pencil | Edit category, name, or prompt |
+
+## Images and metadata
+
+- Supported formats: PNG, JPEG, WebP, GIF, and AVIF.
+- Maximum size per image: 32 MiB.
+- Images are stored without thumbnail re-encoding.
+- SHA-256 is verified after each image write.
+- Existing metadata is preserved because the original file bytes are retained.
+- Screenshots, clipboard images, and converted files may not contain the original generation metadata; the extension cannot recreate metadata that is not present in the source file.
+- Abnormally large metadata is marked as too large to parse, while the original image can still be preserved.
+
+## Updating
+
+For a Releases installation, download the new package and extract it over the same extension directory, then click **Reload** in Edge. Keeping the same directory avoids unnecessarily changing the unpacked extension identity. If you load the update from a different directory instead, Edge may treat it as a new unpacked extension and ask you to select the data directory again; the existing gallery files are not deleted.
+
+For a Git installation, update the checkout:
+
+```powershell
+cd novelai-artist-library-extension
+git pull
+```
+
+After updating the files:
+
+1. Open `edge://extensions/`.
+2. Find **NovelAI Prompt Gallery**.
+3. Click **Reload**.
+4. Refresh any open NovelAI pages.
+
+Updating the extension code does not delete the selected data directory.
+
+## Troubleshooting
+
+### The panel is missing
+
+- Confirm that the current URL is `https://novelai.net/image` or one of its subpaths.
+- Confirm that the extension is enabled.
+- Reload the extension and refresh NovelAI.
+- Approve any Edge prompt requesting access to the NovelAI site.
+
+### The data directory needs authorization
+
+Edge may suspend directory access after a browser restart, folder move, or permission change. Open the settings page and click **Reauthorize**. If the folder was moved or deleted, select the new location.
+
+### Dragging a NovelAI image into the panel does nothing
+
+- Make sure the pointer is inside the panel and that the import overlay appears.
+- Allow the full-resolution history image to finish loading before dragging it.
+- Confirm that the NovelAI login is still valid.
+- Reload the extension and refresh NovelAI.
+- If the web image URL has expired, save the image locally and import it with `＋`.
+
+### An artist prompt is not inserted
+
+- Confirm that you are on the image generation page.
+- Return to the main Prompt tab and try again.
+- Open the card editor and confirm that a saved prompt exists.
+- Reload the page if NovelAI has recently changed its interface.
+
+### Character tags are not copied
+
+Keep the page in the foreground and allow clipboard access in Edge. The saved tags can also be copied manually from the card editor.
+
+### Can `library.json` be edited manually?
+
+It is not recommended while the extension is running. Invalid JSON, duplicate IDs, or broken ordering data can make the library unreadable. Back up the directory and close related NovelAI pages before making manual changes.
+
+## Privacy and permissions
+
+- Images and prompts are stored in the local folder selected by the user.
+- The content script is loaded only on NovelAI pages.
+- Access to NovelAI subdomains is used to retrieve web images dropped into the panel.
+- Clipboard write permission is used to copy character tags.
+- The extension has no cloud synchronization feature and does not intentionally upload the local gallery to an additional service.
+
+## Development and tests
+
+The production extension is located in `extension/` and does not require a build step.
+
+Run the regression tests from the project root:
 
 ```powershell
 npm test
 ```
 
-正式扩展目录是 `extension/`，无需构建。
+The tests cover manifest data, ordering, original byte preservation, metadata parsing, request validation, and drag-and-drop boundaries.
+
+## Project scope
+
+The extension focuses on:
+
+1. using images as visual indexes for prompts;
+2. retaining local originals and their existing metadata;
+3. quickly inserting artist prompts or copying character tags.
+
+It is not intended to replace NovelAI Prompt Chunks, account synchronization, or the built-in image history.

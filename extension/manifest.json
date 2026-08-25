@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "NovelAI 提示词图库",
+  "version": "0.1.0",
+  "description": "在 NovelAI 页面管理画师串和角色提示词，并保留图片原始 metadata。",
+  "permissions": [
+    "storage",
+    "clipboardWrite"
+  ],
+  "host_permissions": [
+    "https://novelai.net/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://novelai.net/*"
+      ],
+      "js": [
+        "content-loader.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "panel.css",
+        "src/*.js"
+      ],
+      "matches": [
+        "https://novelai.net/*"
+      ]
+    }
+  ],
+  "options_page": "settings.html",
+  "action": {
+    "default_title": "NovelAI 提示词图库设置"
+  }
+}

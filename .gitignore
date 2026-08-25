@@ -1,0 +1,21 @@
+# Codex project memory is local-only.
+MEMORY.md
+
+# User library and local browser data.
+data/
+*.log
+
+# Test and packaging outputs.
+tests/
+artifacts/
+coverage/
+.playwright/
+
+# Protect the repository if the project root is selected by mistake.
+/library.json
+/images/
+
+# Common local files.
+node_modules/
+.DS_Store
+Thumbs.db

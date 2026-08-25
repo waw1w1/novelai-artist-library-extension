@@ -1,0 +1,885 @@
+:host,
+:host *,
+.nai-gallery-root,
+.nai-gallery-root * {
+  box-sizing: border-box;
+}
+
+:host {
+  --nai-bg: #111427;
+  --nai-panel: #191d35;
+  --nai-panel-2: #232845;
+  --nai-line: rgba(255, 255, 255, 0.11);
+  --nai-text: #f6f3ff;
+  --nai-muted: #a9adc5;
+  --nai-accent: #f2efa8;
+  --nai-purple: #8f7cf2;
+  --nai-success: #65d6a1;
+  --nai-danger: #ff8392;
+  color: var(--nai-text);
+  font-family: Inter, "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  color: inherit;
+}
+
+.nai-gallery-root {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483646;
+  pointer-events: none;
+}
+
+.nai-gallery-backdrop {
+  position: fixed;
+  inset: 0;
+  display: none;
+  background: rgba(5, 6, 16, 0.68);
+  backdrop-filter: blur(3px);
+  pointer-events: auto;
+}
+
+.nai-gallery-panel {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  width: clamp(320px, 24vw, 378px);
+  height: clamp(390px, 52vh, 540px);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--nai-text);
+  background:
+    radial-gradient(circle at 8% 0%, rgba(143, 124, 242, 0.18), transparent 35%),
+    var(--nai-panel);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 16px;
+  box-shadow: 0 22px 56px rgba(0, 0, 0, 0.45), 0 4px 14px rgba(0, 0, 0, 0.28);
+  pointer-events: auto;
+  isolation: isolate;
+}
+
+.is-expanded .nai-gallery-backdrop {
+  display: block;
+}
+
+.is-expanded .nai-gallery-panel {
+  top: 50%;
+  left: 50%;
+  right: auto;
+  bottom: auto;
+  width: min(92vw, 1280px);
+  height: min(88vh, 900px);
+  transform: translate(-50%, -50%);
+  border-radius: 20px;
+}
+
+.nai-gallery-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  min-height: 58px;
+  padding: 10px 12px 8px 14px;
+  border-bottom: 1px solid var(--nai-line);
+}
+
+.nai-gallery-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.nai-gallery-title-wrap > div {
+  display: grid;
+  min-width: 0;
+}
+
+.nai-gallery-title-wrap strong {
+  overflow: hidden;
+  font-size: 15px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.nai-gallery-logo {
+  display: grid;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  color: #24253b;
+  background: var(--nai-accent);
+  border-radius: 10px;
+  box-shadow: 0 5px 14px rgba(242, 239, 168, 0.16);
+}
+
+.nai-gallery-path {
+  display: block;
+  max-width: 210px;
+  overflow: hidden;
+  color: var(--nai-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.nai-gallery-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.nai-icon-button,
+.nai-card-heart,
+.nai-card-edit {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  cursor: pointer;
+}
+
+.nai-icon-button {
+  width: 32px;
+  height: 32px;
+  color: #e8e7f2;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 9px;
+}
+
+.nai-icon-button:hover,
+.nai-icon-button:focus-visible {
+  color: #1a1b2b;
+  background: var(--nai-accent);
+  outline: none;
+}
+
+.nai-gallery-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--nai-line);
+}
+
+.nai-gallery-tabs button {
+  min-width: 0;
+  height: 34px;
+  padding: 0 12px;
+  color: var(--nai-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.nai-gallery-tabs button:hover {
+  color: var(--nai-text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.nai-gallery-tabs button.is-active {
+  color: #24243a;
+  font-weight: 700;
+  background: var(--nai-accent);
+}
+
+.nai-gallery-scroll {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: rgba(242, 239, 168, 0.5) transparent;
+  scrollbar-width: thin;
+}
+
+.nai-gallery-scroll:focus-visible {
+  outline: 2px solid rgba(242, 239, 168, 0.72);
+  outline-offset: -2px;
+}
+
+.nai-gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 9px;
+  min-width: 0;
+  padding: 10px;
+}
+
+.is-expanded .nai-gallery-grid {
+  grid-template-columns: repeat(auto-fill, minmax(178px, 1fr));
+  gap: 14px;
+  padding: 16px;
+}
+
+.nai-gallery-card {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--nai-text);
+  background: var(--nai-panel-2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease, filter 120ms ease, opacity 120ms ease, transform 120ms ease;
+}
+
+.nai-gallery-card:hover,
+.nai-gallery-card:focus-visible {
+  border-color: rgba(242, 239, 168, 0.7);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.26);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.nai-card-media {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  background: linear-gradient(135deg, #292e4f, #16192d);
+}
+
+.nai-card-media img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 1;
+  transition: opacity 160ms ease;
+}
+
+.nai-gallery-card.is-loading .nai-card-media img,
+.nai-gallery-card.has-image-error .nai-card-media img {
+  opacity: 0;
+}
+
+.nai-image-loader {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  color: var(--nai-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.nai-gallery-card:not(.is-loading):not(.has-image-error) .nai-image-loader {
+  display: none;
+}
+
+.nai-card-heart,
+.nai-card-edit {
+  position: absolute;
+  top: 7px;
+  z-index: 2;
+  width: 30px;
+  height: 30px;
+  color: white;
+  background: rgba(13, 15, 29, 0.82);
+  border-radius: 9px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(5px);
+}
+
+.nai-card-heart {
+  left: 7px;
+  color: #ff9dac;
+  font-size: 19px;
+}
+
+.nai-card-edit {
+  right: 7px;
+  font-size: 17px;
+}
+
+.nai-card-heart:hover,
+.nai-card-edit:hover,
+.nai-card-heart:focus-visible,
+.nai-card-edit:focus-visible {
+  color: #24243a;
+  background: var(--nai-accent);
+  outline: none;
+}
+
+.nai-card-caption {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 9px 9px;
+}
+
+.nai-card-caption strong,
+.nai-card-caption span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.nai-card-caption strong {
+  font-size: 12px;
+}
+
+.nai-card-caption span {
+  color: var(--nai-muted);
+  font-size: 10px;
+}
+
+.nai-metadata-badge {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  padding: 3px 5px;
+  color: #d8ffef;
+  background: rgba(24, 107, 76, 0.82);
+  border: 1px solid rgba(101, 214, 161, 0.5);
+  border-radius: 5px;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.nai-gallery-card.is-drag-source {
+  opacity: 0.38;
+}
+
+.nai-gallery-card.is-blocked-drop {
+  filter: grayscale(1);
+  opacity: 0.3;
+}
+
+.nai-gallery-card.drop-before::before,
+.nai-gallery-card.drop-after::after {
+  position: absolute;
+  right: 4px;
+  left: 4px;
+  z-index: 4;
+  height: 3px;
+  content: "";
+  background: var(--nai-accent);
+  border-radius: 2px;
+  box-shadow: 0 0 0 2px rgba(17, 20, 39, 0.8);
+}
+
+.nai-gallery-card.drop-before::before {
+  top: 1px;
+}
+
+.nai-gallery-card.drop-after::after {
+  bottom: 1px;
+}
+
+.nai-gallery-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 6px;
+  min-height: 190px;
+  padding: 28px;
+  color: var(--nai-muted);
+  text-align: center;
+}
+
+.nai-gallery-empty[hidden] {
+  display: none;
+}
+
+.nai-gallery-empty strong {
+  color: var(--nai-text);
+}
+
+.nai-gallery-empty p {
+  max-width: 260px;
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
+.nai-empty-icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 4px;
+  place-items: center;
+  color: var(--nai-accent);
+  background: rgba(242, 239, 168, 0.08);
+  border: 1px dashed rgba(242, 239, 168, 0.48);
+  border-radius: 14px;
+  font-size: 25px;
+}
+
+.nai-gallery-empty button,
+.nai-primary,
+.nai-secondary {
+  min-height: 34px;
+  padding: 7px 13px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.nai-gallery-empty button,
+.nai-primary {
+  color: #24243a;
+  font-weight: 700;
+  background: var(--nai-accent);
+  border: 1px solid var(--nai-accent);
+}
+
+.nai-secondary {
+  color: var(--nai-text);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.nai-primary:hover,
+.nai-gallery-empty button:hover,
+.nai-secondary:hover {
+  filter: brightness(1.08);
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.nai-gallery-footer {
+  display: grid;
+  grid-template-columns: auto minmax(0, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 11px;
+  color: var(--nai-muted);
+  border-top: 1px solid var(--nai-line);
+  font-size: 10px;
+}
+
+.nai-gallery-status,
+.nai-drop-hint {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.nai-drop-hint {
+  text-align: right;
+}
+
+.nai-status-dot {
+  width: 7px;
+  height: 7px;
+  background: #8990aa;
+  border-radius: 50%;
+}
+
+.nai-status-dot[data-status="ready"] { background: var(--nai-success); }
+.nai-status-dot[data-status="warning"] { background: #f1bd67; }
+.nai-status-dot[data-status="error"] { background: var(--nai-danger); }
+.nai-status-dot[data-status="loading"] { background: var(--nai-purple); }
+
+.is-file-hover .nai-gallery-panel::after {
+  position: absolute;
+  inset: 6px;
+  z-index: 8;
+  display: grid;
+  content: "松开即可导入图片";
+  color: #24243a;
+  font-size: 18px;
+  font-weight: 800;
+  place-items: center;
+  background: rgba(242, 239, 168, 0.92);
+  border: 2px dashed #6b629a;
+  border-radius: 13px;
+  pointer-events: none;
+}
+
+.nai-modal-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  padding: 24px;
+  overflow: auto;
+  place-items: center;
+  background: rgba(5, 6, 16, 0.76);
+  backdrop-filter: blur(5px);
+  pointer-events: auto;
+}
+
+.nai-modal-layer[hidden] {
+  display: none;
+}
+
+.nai-modal {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(680px, calc(100vw - 40px));
+  max-height: min(86vh, 820px);
+  overflow: hidden;
+  color: var(--nai-text);
+  background: #1a1e36;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 16px;
+  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.54);
+}
+
+.nai-modal > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 17px 18px 13px;
+  border-bottom: 1px solid var(--nai-line);
+}
+
+.nai-modal h2,
+.nai-modal p {
+  margin: 0;
+}
+
+.nai-modal h2 {
+  font-size: 18px;
+}
+
+.nai-modal header p {
+  margin-top: 3px;
+  color: var(--nai-muted);
+  font-size: 12px;
+}
+
+.nai-modal header > button {
+  width: 31px;
+  height: 31px;
+  padding: 0;
+  color: var(--nai-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 24px;
+}
+
+.nai-modal header > button:hover {
+  color: var(--nai-text);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.nai-modal-body {
+  min-width: 0;
+  min-height: 0;
+  padding: 17px 18px;
+  overflow: auto;
+}
+
+.nai-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  padding: 12px 18px 15px;
+  border-top: 1px solid var(--nai-line);
+}
+
+.nai-import-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  margin-bottom: 14px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 11px;
+}
+
+.nai-import-preview-row img {
+  flex: 0 0 62px;
+  width: 62px;
+  height: 62px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+.nai-import-preview-row span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.nai-kind-choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.nai-kind-choices button {
+  display: grid;
+  gap: 6px;
+  min-height: 116px;
+  padding: 17px;
+  color: var(--nai-text);
+  text-align: left;
+  background: rgba(143, 124, 242, 0.1);
+  border: 1px solid rgba(143, 124, 242, 0.4);
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.nai-kind-choices button:hover,
+.nai-kind-choices button:focus-visible {
+  background: rgba(242, 239, 168, 0.13);
+  border-color: var(--nai-accent);
+  outline: none;
+}
+
+.nai-kind-choices strong {
+  font-size: 18px;
+}
+
+.nai-kind-choices span {
+  color: var(--nai-muted);
+  font-size: 12px;
+}
+
+.nai-editor-form,
+.nai-editor-form label {
+  display: grid;
+  gap: 7px;
+}
+
+.nai-editor-form {
+  gap: 15px;
+}
+
+.nai-editor-form label {
+  min-width: 0;
+  color: #d8d9e7;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.nai-editor-form textarea,
+.nai-editor-form input,
+.nai-editor-form select {
+  width: 100%;
+  min-width: 0;
+  color: var(--nai-text);
+  background: #101326;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 9px;
+  outline: none;
+}
+
+.nai-editor-form textarea {
+  min-height: 92px;
+  padding: 10px 11px;
+  resize: vertical;
+  line-height: 1.55;
+}
+
+.nai-editor-form input,
+.nai-editor-form select {
+  height: 38px;
+  padding: 0 10px;
+}
+
+.nai-editor-form textarea:focus,
+.nai-editor-form input:focus,
+.nai-editor-form select:focus {
+  border-color: var(--nai-accent);
+  box-shadow: 0 0 0 2px rgba(242, 239, 168, 0.12);
+}
+
+.nai-form-row.two-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 12px;
+}
+
+.nai-prompt-snapshot {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 11px;
+}
+
+.nai-section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.nai-section-heading span {
+  color: var(--nai-muted);
+  font-size: 10px;
+}
+
+.nai-prompt-snapshot textarea {
+  min-height: 118px;
+  color: #c9cbe0;
+}
+
+.nai-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.nai-inline-actions button {
+  min-height: 30px;
+  padding: 5px 10px;
+  font-size: 11px;
+}
+
+.nai-metadata-summary {
+  padding: 9px 10px;
+  color: #e8c98f;
+  background: rgba(232, 201, 143, 0.08);
+  border-radius: 8px;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.nai-metadata-summary.has-metadata {
+  color: #9aebc5;
+  background: rgba(101, 214, 161, 0.08);
+}
+
+.nai-form-error {
+  padding: 9px 10px;
+  color: #ffd1d7;
+  background: rgba(255, 131, 146, 0.12);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.nai-form-error[hidden] {
+  display: none;
+}
+
+.nai-big-loader {
+  width: 42px;
+  height: 42px;
+  margin: 22px auto;
+  border: 4px solid rgba(255, 255, 255, 0.12);
+  border-top-color: var(--nai-accent);
+  border-radius: 50%;
+  animation: nai-spin 780ms linear infinite;
+}
+
+@keyframes nai-spin {
+  to { transform: rotate(360deg); }
+}
+
+.nai-toast-region {
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  z-index: 50;
+  display: grid;
+  gap: 8px;
+  width: min(420px, calc(100vw - 32px));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.nai-toast {
+  padding: 10px 13px;
+  color: white;
+  text-align: center;
+  background: #303652;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.nai-toast.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.nai-toast.is-success { background: #1f7256; }
+.nai-toast.is-warning { background: #805c26; }
+.nai-toast.is-error { background: #8a3543; }
+
+@media (max-width: 680px) {
+  .nai-gallery-panel {
+    right: 8px;
+    bottom: 8px;
+    width: calc(100vw - 16px);
+    height: min(58vh, 500px);
+  }
+
+  .is-expanded .nai-gallery-panel {
+    width: calc(100vw - 16px);
+    height: calc(100vh - 16px);
+    border-radius: 14px;
+  }
+
+  .is-expanded .nai-gallery-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px;
+    padding: 10px;
+  }
+
+  .nai-modal-layer {
+    padding: 8px;
+  }
+
+  .nai-modal {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+  }
+
+  .nai-kind-choices,
+  .nai-form-row.two-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .nai-drop-hint {
+    display: none;
+  }
+
+  .nai-gallery-footer {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nai-gallery-root *,
+  .nai-gallery-root *::before,
+  .nai-gallery-root *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

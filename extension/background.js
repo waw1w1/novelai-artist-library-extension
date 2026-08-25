@@ -13,6 +13,7 @@ import {
   withLibraryReadLock,
   withLibraryWriteLock,
 } from "./src/directory-db.js";
+import { removeItemFromManifest } from "./src/core.js";
 
 class RequestError extends Error {
   constructor(code, message, cause) {
@@ -28,6 +29,7 @@ const TYPE_ALIASES = new Map([
   ["GET-FILE", "GET_FILE"],
   ["IMPORT-ITEM", "IMPORT_ITEM"],
   ["UPDATE-ITEM", "UPDATE_ITEM"],
+  ["DELETE-ITEM", "DELETE_ITEM"],
   ["TOGGLE-FAVORITE", "TOGGLE_FAVORITE"],
   ["REORDER", "REORDER_ITEMS"],
   ["REORDER-ITEMS", "REORDER_ITEMS"],
@@ -39,6 +41,7 @@ const TYPE_ALIASES = new Map([
 const MUTATING_TYPES = new Set([
   "IMPORT_ITEM",
   "UPDATE_ITEM",
+  "DELETE_ITEM",
   "TOGGLE_FAVORITE",
   "REORDER_ITEMS",
   "SET_UI_STATE",
@@ -271,6 +274,7 @@ export function normalizeMetadata(value) {
   }
   return {
     hasMetadata: value.hasMetadata === true,
+    hasNovelAiMetadata: value.hasNovelAiMetadata === true,
     prompt: requireBoundedString(value.prompt ?? "", "metadata.prompt", MAX_PROMPT_LENGTH, { allowEmpty: true }),
     summary: requireBoundedString(value.summary ?? "", "metadata.summary", MAX_METADATA_SUMMARY_LENGTH, { allowEmpty: true }),
   };
@@ -519,6 +523,26 @@ async function updateItem(payload) {
   return { item: manifest.items[id], manifest };
 }
 
+async function deleteItem(payload) {
+  const id = requireString(payload.id || payload.itemId, "id");
+  const { directoryHandle, library } = await requireLibrary();
+  const item = itemForId(library, id);
+  const imageFile = item.imageFile || String(item.imagePath || "").replace(/^images\//u, "");
+  const nextLibrary = removeItemFromManifest(library, id);
+  const manifest = await writeLibrary(directoryHandle, nextLibrary);
+  let imageRemoved = !imageFile;
+  let warning = null;
+  if (imageFile) {
+    try {
+      await removeImageFile(directoryHandle, imageFile);
+      imageRemoved = true;
+    } catch (error) {
+      warning = `条目已删除，但原图文件清理失败：${error?.message || "未知错误"}`;
+    }
+  }
+  return { removedId: id, imageRemoved, warning, manifest };
+}
+
 async function toggleFavorite(payload) {
   const id = requireString(payload.id || payload.itemId, "id");
   const { directoryHandle, library } = await requireLibrary();
@@ -681,11 +705,24 @@ async function reorderItems(payload) {
   return { orders: manifest.orders, manifest };
 }
 
+function validatePosition(value, field) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new RequestError("UI_STATE_INVALID", `${field} 必须是位置对象`);
+  }
+  const unknownKeys = Object.keys(value).filter((key) => key !== "x" && key !== "y");
+  const x = Number(value.x);
+  const y = Number(value.y);
+  if (unknownKeys.length || !Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x > 100_000 || y > 100_000) {
+    throw new RequestError("UI_STATE_INVALID", `${field} 必须包含合理的 x 和 y 坐标`);
+  }
+  return { x, y };
+}
+
 export function validateUiPatch(patch) {
   if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
     throw new RequestError("UI_STATE_INVALID", "UI 状态必须是对象");
   }
-  const unknownKeys = Object.keys(patch).filter((key) => !["activeKind", "expanded", "scroll"].includes(key));
+  const unknownKeys = Object.keys(patch).filter((key) => !["activeKind", "expanded", "minimized", "positions", "scroll"].includes(key));
   if (unknownKeys.length) {
     throw new RequestError("UI_STATE_INVALID", `不支持的 UI 状态字段：${unknownKeys.join(", ")}`);
   }
@@ -694,6 +731,22 @@ export function validateUiPatch(patch) {
   if (patch.expanded !== undefined) {
     if (typeof patch.expanded !== "boolean") throw new RequestError("UI_STATE_INVALID", "expanded 必须是布尔值");
     output.expanded = patch.expanded;
+  }
+  if (patch.minimized !== undefined) {
+    if (typeof patch.minimized !== "boolean") throw new RequestError("UI_STATE_INVALID", "minimized 必须是布尔值");
+    output.minimized = patch.minimized;
+  }
+  if (patch.positions !== undefined) {
+    if (!patch.positions || typeof patch.positions !== "object" || Array.isArray(patch.positions)) {
+      throw new RequestError("UI_STATE_INVALID", "positions 必须是对象");
+    }
+    const allowedPositions = ["compact", "minimized"];
+    const unknownPositionKeys = Object.keys(patch.positions).filter((key) => !allowedPositions.includes(key));
+    if (unknownPositionKeys.length) throw new RequestError("UI_STATE_INVALID", "positions 只允许 compact 和 minimized");
+    output.positions = {};
+    for (const key of allowedPositions) {
+      if (patch.positions[key] !== undefined) output.positions[key] = validatePosition(patch.positions[key], `positions.${key}`);
+    }
   }
   if (patch.scroll !== undefined) {
     if (!patch.scroll || typeof patch.scroll !== "object" || Array.isArray(patch.scroll)) {
@@ -722,6 +775,7 @@ async function setUiState(payload) {
     ...(library.ui || {}),
     ...safePatch,
     ...(safePatch.scroll ? { scroll: { ...(library.ui?.scroll || {}), ...safePatch.scroll } } : {}),
+    ...(safePatch.positions ? { positions: { ...(library.ui?.positions || {}), ...safePatch.positions } } : {}),
   };
   const manifest = await writeLibrary(directoryHandle, library);
   return { ui: manifest.ui };
@@ -771,6 +825,8 @@ async function dispatchRequest(request) {
       return importItem(payload);
     case "UPDATE_ITEM":
       return updateItem(payload);
+    case "DELETE_ITEM":
+      return deleteItem(payload);
     case "TOGGLE_FAVORITE":
       return toggleFavorite(payload);
     case "REORDER_ITEMS":

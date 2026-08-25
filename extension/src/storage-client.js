@@ -32,6 +32,7 @@ export const storage = {
   getFile: (id) => sendRequest("GET_FILE", { id }),
   importItem: (payload) => sendRequest("IMPORT_ITEM", payload),
   updateItem: (id, changes) => sendRequest("UPDATE_ITEM", { id, changes }),
+  deleteItem: (id) => sendRequest("DELETE_ITEM", { id }),
   toggleFavorite: (id) => sendRequest("TOGGLE_FAVORITE", { id }),
   reorderItems: (payload) => sendRequest("REORDER_ITEMS", payload),
   setUiState: (changes) => sendRequest("SET_UI_STATE", { changes }),

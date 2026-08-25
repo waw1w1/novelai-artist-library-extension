@@ -71,6 +71,58 @@ button {
   isolation: isolate;
 }
 
+.nai-gallery-root:not(.is-expanded):not(.is-minimized) .nai-gallery-header {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.nai-gallery-root.is-position-dragging .nai-gallery-header,
+.nai-gallery-root.is-position-dragging .nai-gallery-minimized {
+  cursor: grabbing;
+}
+
+.nai-gallery-minimized {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 12;
+  display: none;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  color: #24243a;
+  background: var(--nai-accent);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 14px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.42);
+  cursor: grab;
+  pointer-events: auto;
+  touch-action: none;
+  place-items: center;
+}
+
+.nai-gallery-minimized span {
+  font-size: 23px;
+  line-height: 1;
+}
+
+.nai-gallery-minimized:hover,
+.nai-gallery-minimized:focus-visible {
+  filter: brightness(1.08);
+  outline: 2px solid rgba(143, 124, 242, 0.85);
+  outline-offset: 2px;
+}
+
+.is-minimized .nai-gallery-panel,
+.is-minimized .nai-gallery-backdrop {
+  display: none !important;
+}
+
+.is-minimized .nai-gallery-minimized {
+  display: grid;
+}
+
 .is-expanded .nai-gallery-backdrop {
   display: block;
 }
@@ -146,7 +198,8 @@ button {
 
 .nai-icon-button,
 .nai-card-heart,
-.nai-card-edit {
+.nai-card-edit,
+.nai-card-delete {
   display: grid;
   place-items: center;
   padding: 0;
@@ -309,7 +362,8 @@ button {
 }
 
 .nai-card-heart,
-.nai-card-edit {
+.nai-card-edit,
+.nai-card-delete {
   position: absolute;
   top: 7px;
   z-index: 2;
@@ -329,17 +383,35 @@ button {
 }
 
 .nai-card-edit {
-  right: 7px;
+  right: 43px;
   font-size: 17px;
+}
+
+.nai-card-delete {
+  right: 7px;
+  color: #ff6f7f;
+  background: rgba(88, 18, 31, 0.9);
+  border-color: rgba(255, 111, 127, 0.58);
+  font-size: 22px;
+  font-weight: 800;
 }
 
 .nai-card-heart:hover,
 .nai-card-edit:hover,
+.nai-card-delete:hover,
 .nai-card-heart:focus-visible,
-.nai-card-edit:focus-visible {
+.nai-card-edit:focus-visible,
+.nai-card-delete:focus-visible {
   color: #24243a;
   background: var(--nai-accent);
   outline: none;
+}
+
+.nai-card-delete:hover,
+.nai-card-delete:focus-visible {
+  color: white;
+  background: #c83248;
+  border-color: #ff99a6;
 }
 
 .nai-card-caption {
@@ -451,7 +523,8 @@ button {
 
 .nai-gallery-empty button,
 .nai-primary,
-.nai-secondary {
+.nai-secondary,
+.nai-danger-button {
   min-height: 34px;
   padding: 7px 13px;
   border-radius: 9px;
@@ -472,10 +545,28 @@ button {
   border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
+.nai-danger-button {
+  color: white;
+  font-weight: 750;
+  background: #b92f45;
+  border: 1px solid #e65c70;
+}
+
 .nai-primary:hover,
 .nai-gallery-empty button:hover,
-.nai-secondary:hover {
+.nai-secondary:hover,
+.nai-danger-button:hover {
   filter: brightness(1.08);
+}
+
+.nai-delete-warning {
+  margin: 0;
+  padding: 14px;
+  color: #ffd7dc;
+  background: rgba(185, 47, 69, 0.14);
+  border: 1px solid rgba(230, 92, 112, 0.35);
+  border-radius: 10px;
+  line-height: 1.65;
 }
 
 button:disabled {
@@ -854,6 +945,11 @@ button:disabled {
     bottom: 8px;
     width: calc(100vw - 16px);
     height: min(58vh, 500px);
+  }
+
+  .nai-gallery-minimized {
+    right: 8px;
+    bottom: 8px;
   }
 
   .is-expanded .nai-gallery-panel {

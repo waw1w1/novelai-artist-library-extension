@@ -423,6 +423,16 @@ export function removeItemFromManifest(manifest, idValue) {
   return next;
 }
 
+export function resetFloatingUiState(ui) {
+  const source = isRecord(ui) ? ui : {};
+  return {
+    ...source,
+    expanded: false,
+    minimized: false,
+    positions: {},
+  };
+}
+
 function anchorElements(container, options) {
   if (options?.elements) return Array.from(options.elements);
   if (typeof container?.querySelectorAll !== "function") return [];
@@ -522,4 +532,3 @@ export function restoreScrollAnchor(container, anchor, options = {}) {
   container.scrollTop = targetScrollTop;
   return targetScrollTop;
 }
-

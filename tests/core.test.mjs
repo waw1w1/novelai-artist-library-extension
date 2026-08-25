@@ -10,6 +10,8 @@ import {
   getDisplayItems,
   normalizeManifest,
   reorderWithinPartition,
+  removeItemFromManifest,
+  resetFloatingUiState,
   restoreScrollAnchor,
   toggleFavorite,
   updateItemInManifest,
@@ -187,6 +189,34 @@ test("新增和编辑类型、收藏状态时同步维护两个图库的 orders"
     () => updateItemInManifest(manifest, "x", { id: "renamed" }),
     /cannot be changed/,
   );
+});
+
+test("删除条目会同步清理 items、普通顺序和收藏顺序", () => {
+  let manifest = addItems([
+    { id: "keep", kind: "artist" },
+    { id: "remove", kind: "artist", favorite: true },
+  ]);
+  manifest = removeItemFromManifest(manifest, "remove");
+  assert.equal(Object.hasOwn(manifest.items, "remove"), false);
+  assert.deepEqual(manifest.orders.artist.normalMaster, ["keep"]);
+  assert.deepEqual(manifest.orders.artist.favorites, []);
+  assert.deepEqual(getDisplayIds(manifest, "artist"), ["keep"]);
+});
+
+test("重置悬浮布局保留其他 UI 数据并恢复默认显示状态", () => {
+  assert.deepEqual(resetFloatingUiState({
+    activeKind: "character",
+    expanded: true,
+    minimized: true,
+    positions: { compact: { x: 20, y: 30 }, minimized: { x: 40, y: 50 } },
+    scroll: { artist: 12, character: 34 },
+  }), {
+    activeKind: "character",
+    expanded: false,
+    minimized: false,
+    positions: {},
+    scroll: { artist: 12, character: 34 },
+  });
 });
 
 function fakeElement(id, rect) {

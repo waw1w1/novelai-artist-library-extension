@@ -50,6 +50,7 @@ function isImageFile(file) {
 function safeDraggedImageUrl(value) {
   const text = String(value || "").trim();
   if (!text) return null;
+  if (!/^(?:(?:https?|blob|data):|\.{0,2}\/)/iu.test(text)) return null;
   try {
     const url = new URL(text, globalThis.location?.href || "https://novelai.net/");
     return ["https:", "http:", "blob:", "data:"].includes(url.protocol) ? url.href : null;
@@ -63,8 +64,12 @@ export function extractDraggedImageUrls(dataTransfer, rememberedSource = null) {
   try {
     const uriList = dataTransfer?.getData?.("text/uri-list") || "";
     candidates.push(...uriList.split(/\r?\n/u).filter((line) => line && !line.startsWith("#")));
+  } catch {
+    // 继续尝试其他拖放格式。
+  }
+  try {
     const html = dataTransfer?.getData?.("text/html") || "";
-    if (html) {
+    if (html && typeof DOMParser === "function") {
       const document = new DOMParser().parseFromString(html, "text/html");
       candidates.push(...[...document.querySelectorAll("img[src], source[srcset]")].flatMap((element) => [
         element.getAttribute("src"),
@@ -72,9 +77,65 @@ export function extractDraggedImageUrls(dataTransfer, rememberedSource = null) {
       ]));
     }
   } catch {
-    // 某些浏览器只允许在 drop 阶段读取字符串数据；已记录的源图片仍可使用。
+    // HTML 片段不是有效标记时继续尝试文本和自定义格式。
+  }
+  try {
+    const plainText = dataTransfer?.getData?.("text/plain") || "";
+    const downloadUrl = dataTransfer?.getData?.("DownloadURL") || "";
+    candidates.push(plainText, downloadUrl.split(":").slice(2).join(":"));
+  } catch {
+    // 继续尝试自定义格式。
+  }
+  try {
+    for (const type of Array.from(dataTransfer?.types || [])) {
+      if (["Files", "text/uri-list", "text/html", "text/plain", "DownloadURL"].includes(type)) continue;
+      const value = String(dataTransfer?.getData?.(type) || "").replaceAll("\\/", "/");
+      candidates.push(value);
+      candidates.push(...(value.match(/(?:https?|blob):\/\/[^\s"'<>\\]+/giu) || []));
+    }
+  } catch {
+    // 某些浏览器只允许在 drop 阶段读取部分字符串数据；已记录的源图片仍可使用。
   }
   return [...new Set(candidates.map(safeDraggedImageUrl).filter(Boolean))];
+}
+
+export function extractElementImageSource(element) {
+  if (!element || typeof element !== "object") return null;
+  const image = String(element.tagName || "").toUpperCase() === "IMG"
+    ? element
+    : element.querySelector?.("img[src], img[srcset], img[data-src], picture img") || null;
+  const candidates = [
+    image?.currentSrc,
+    image?.src,
+    image?.srcset?.split(",")[0]?.trim().split(/\s+/u)[0],
+    image?.getAttribute?.("data-src"),
+    image?.getAttribute?.("data-original"),
+    image?.getAttribute?.("data-full-src"),
+    element.getAttribute?.("data-src"),
+    element.getAttribute?.("data-image-src"),
+    element.getAttribute?.("data-image-url"),
+    element.getAttribute?.("data-original-url"),
+    element.getAttribute?.("data-full-src"),
+    element.getAttribute?.("data-url"),
+    element.getAttribute?.("href"),
+  ];
+  try {
+    const backgroundImage = element.ownerDocument?.defaultView?.getComputedStyle?.(element)?.backgroundImage || "";
+    candidates.push(...[...backgroundImage.matchAll(/url\((?:["']?)(.*?)(?:["']?)\)/giu)].map((match) => match[1]));
+  } catch {
+    // 样式读取失败时仍可使用元素属性和子图片。
+  }
+  const url = candidates.map(safeDraggedImageUrl).find(Boolean);
+  if (!url) return null;
+  return {
+    url,
+    name: image?.getAttribute?.("download")
+      || image?.alt
+      || image?.title
+      || element.getAttribute?.("aria-label")
+      || element.getAttribute?.("title")
+      || "novelai-image",
+  };
 }
 
 export function draggedImageFileName(source, mimeType = "") {
@@ -94,6 +155,42 @@ export function draggedImageFileName(source, mimeType = "") {
 export function isPointInsideRect(clientX, clientY, rect) {
   return clientX >= rect.left && clientX <= rect.right
     && clientY >= rect.top && clientY <= rect.bottom;
+}
+
+export function clampFloatingPosition(x, y, width, height, viewportWidth, viewportHeight, margin = 8) {
+  const safeWidth = Math.max(0, Number(width) || 0);
+  const safeHeight = Math.max(0, Number(height) || 0);
+  const safeViewportWidth = Math.max(0, Number(viewportWidth) || 0);
+  const safeViewportHeight = Math.max(0, Number(viewportHeight) || 0);
+  const horizontalMargin = safeWidth + margin * 2 <= safeViewportWidth ? margin : 0;
+  const verticalMargin = safeHeight + margin * 2 <= safeViewportHeight ? margin : 0;
+  const maxX = Math.max(horizontalMargin, safeViewportWidth - safeWidth - horizontalMargin);
+  const maxY = Math.max(verticalMargin, safeViewportHeight - safeHeight - verticalMargin);
+  return {
+    x: Math.round(Math.min(maxX, Math.max(horizontalMargin, Number(x) || 0))),
+    y: Math.round(Math.min(maxY, Math.max(verticalMargin, Number(y) || 0))),
+  };
+}
+
+export function resolveImportPromptSource(metadata, snapshot, kind) {
+  if (metadata?.hasNovelAiMetadata) {
+    const prompt = String(metadata.prompt || "").trim();
+    return {
+      source: "metadata",
+      prompt,
+      message: prompt
+        ? "已检测到 NovelAI 图片 metadata，插件提示词将优先使用图片内置提示词。"
+        : "已检测到 NovelAI 图片 metadata，但其中没有可识别的正向提示词；为避免来源混淆，不会自动改用网页提示词。",
+    };
+  }
+  const selection = selectSnapshotActionPrompt(snapshot, kind);
+  return {
+    source: "page",
+    prompt: selection.ok ? selection.prompt : "",
+    message: selection.ok
+      ? "未检测到可识别的 NovelAI 图片 metadata，已将当前 NovelAI 页面提示词作为回退来源。"
+      : `未检测到可识别的 NovelAI 图片 metadata，已切换到当前页面提示词作为回退来源；${selection.message}`,
+  };
 }
 
 function setButtonBusy(button, busy, text = "保存中…") {
@@ -117,6 +214,10 @@ class GalleryPanel {
     this.status = { configured: false };
     this.activeKind = "artist";
     this.expanded = false;
+    this.minimized = false;
+    this.positions = {};
+    this.positionDrag = null;
+    this.suppressRestoreClickUntil = 0;
     this.initializedState = false;
     this.cardNodes = new Map();
     this.fileCache = new Map();
@@ -153,6 +254,7 @@ class GalleryPanel {
           <div class="nai-gallery-header-actions">
             <button type="button" class="nai-icon-button" data-action="pick-files" aria-label="选择图片导入" title="选择图片导入">＋</button>
             <button type="button" class="nai-icon-button" data-action="settings" aria-label="设置" title="设置">⚙</button>
+            <button type="button" class="nai-icon-button" data-action="minimize" aria-label="收束为小图标" title="收束为小图标">−</button>
             <button type="button" class="nai-icon-button" data-action="expand" aria-label="展开面板" title="展开面板">⛶</button>
             <input class="nai-file-picker" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.avif,image/png,image/jpeg,image/webp,image/gif,image/avif" multiple hidden>
           </div>
@@ -176,12 +278,14 @@ class GalleryPanel {
           <span class="nai-drop-hint">拖入图片 · 拖动卡片排序或拖回 NovelAI</span>
         </footer>
       </section>
+      <button type="button" class="nai-gallery-minimized" data-action="restore" aria-label="恢复提示词图库" title="恢复提示词图库"><span aria-hidden="true">✦</span></button>
       <div class="nai-modal-layer" hidden></div>
       <div class="nai-toast-region" aria-live="polite"></div>
     `;
     shadow.append(this.root);
 
     this.panel = this.root.querySelector(".nai-gallery-panel");
+    this.minimizedButton = this.root.querySelector(".nai-gallery-minimized");
     this.scroll = this.root.querySelector(".nai-gallery-scroll");
     this.grid = this.root.querySelector(".nai-gallery-grid");
     this.empty = this.root.querySelector(".nai-gallery-empty");
@@ -207,6 +311,10 @@ class GalleryPanel {
     this.onPageImageDragStart = this.onPageImageDragStart.bind(this);
     this.onPageDragEnd = this.onPageDragEnd.bind(this);
     this.onModalKeyDown = this.onModalKeyDown.bind(this);
+    this.onPositionPointerDown = this.onPositionPointerDown.bind(this);
+    this.onPositionPointerMove = this.onPositionPointerMove.bind(this);
+    this.onPositionPointerUp = this.onPositionPointerUp.bind(this);
+    this.handleViewportResize = this.handleViewportResize.bind(this);
 
     this.imageObserver = typeof IntersectionObserver === "function"
       ? new IntersectionObserver((entries) => {
@@ -219,6 +327,7 @@ class GalleryPanel {
       : null;
 
     this.root.addEventListener("click", this.onRootClick);
+    this.root.addEventListener("pointerdown", this.onPositionPointerDown);
     this.filePicker.addEventListener("change", () => {
       const files = [...this.filePicker.files].filter(isImageFile);
       this.filePicker.value = "";
@@ -238,6 +347,10 @@ class GalleryPanel {
     window.addEventListener("dragover", this.onWindowExternalDragCapture, true);
     window.addEventListener("drop", this.onWindowExternalDragCapture, true);
     window.addEventListener("dragend", this.onPageDragEnd, true);
+    window.addEventListener("pointermove", this.onPositionPointerMove, true);
+    window.addEventListener("pointerup", this.onPositionPointerUp, true);
+    window.addEventListener("pointercancel", this.onPositionPointerUp, true);
+    window.addEventListener("resize", this.handleViewportResize);
   }
 
   async init() {
@@ -260,7 +373,7 @@ class GalleryPanel {
     this.clearFileCache();
   }
 
-  async reload({ preserveScroll = true } = {}) {
+  async reload({ preserveScroll = true, reloadUiState = false } = {}) {
     if (this.destroyed || !this.active) return;
     const generation = ++this.reloadGeneration;
     const anchor = preserveScroll ? captureScrollAnchor(this.scroll) : null;
@@ -297,10 +410,12 @@ class GalleryPanel {
       const result = nextStatus.manifest ? { manifest: nextStatus.manifest } : await storage.getLibrary();
       if (generation !== this.reloadGeneration) return;
       this.manifest = normalizeManifest(result?.manifest ?? result);
-      if (!this.initializedState) {
+      if (!this.initializedState || reloadUiState) {
         const savedUi = this.manifest.ui || {};
         if (savedUi.activeKind in KINDS) this.activeKind = savedUi.activeKind;
         this.expanded = Boolean(savedUi.expanded);
+        this.minimized = Boolean(savedUi.minimized);
+        this.positions = this.normalizeSavedPositions(savedUi.positions);
         this.initializedState = true;
       }
       this.renderDirectoryStatus();
@@ -345,7 +460,8 @@ class GalleryPanel {
 
   renderPanelState() {
     this.root.classList.toggle("is-expanded", this.expanded);
-    this.host.style.zIndex = this.expanded ? "100000" : "10000";
+    this.root.classList.toggle("is-minimized", this.minimized);
+    this.host.style.zIndex = this.expanded && !this.minimized ? "100000" : "10000";
     this.expandButton.textContent = this.expanded ? "↙" : "⛶";
     this.expandButton.setAttribute("aria-label", this.expanded ? "收回面板" : "展开面板");
     this.expandButton.title = this.expanded ? "收回面板" : "展开面板";
@@ -354,6 +470,114 @@ class GalleryPanel {
       button.classList.toggle("is-active", selected);
       button.setAttribute("aria-pressed", String(selected));
     }
+    requestAnimationFrame(() => this.applyCurrentPosition());
+  }
+
+  normalizeSavedPositions(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    const output = {};
+    for (const key of ["compact", "minimized"]) {
+      const position = value[key];
+      if (position && Number.isFinite(Number(position.x)) && Number.isFinite(Number(position.y))) {
+        output[key] = { x: Math.max(0, Number(position.x)), y: Math.max(0, Number(position.y)) };
+      }
+    }
+    return output;
+  }
+
+  currentPositionKey() {
+    if (this.minimized) return "minimized";
+    return this.expanded ? null : "compact";
+  }
+
+  resetInlinePosition(element) {
+    for (const property of ["left", "top", "right", "bottom", "transform"]) element.style.removeProperty(property);
+  }
+
+  applyCurrentPosition() {
+    this.resetInlinePosition(this.panel);
+    this.resetInlinePosition(this.minimizedButton);
+    const key = this.currentPositionKey();
+    if (!key) return;
+    const target = key === "minimized" ? this.minimizedButton : this.panel;
+    const saved = this.positions[key];
+    if (!saved || !target.isConnected) return;
+    const rect = target.getBoundingClientRect();
+    const position = clampFloatingPosition(saved.x, saved.y, rect.width, rect.height, window.innerWidth, window.innerHeight);
+    this.positions[key] = position;
+    target.style.left = `${position.x}px`;
+    target.style.top = `${position.y}px`;
+    target.style.right = "auto";
+    target.style.bottom = "auto";
+    target.style.transform = "none";
+  }
+
+  onPositionPointerDown(event) {
+    if (event.button !== 0 || !event.isPrimary) return;
+    const minimizedTarget = event.target.closest(".nai-gallery-minimized");
+    const headerTarget = event.target.closest(".nai-gallery-header");
+    if (!minimizedTarget && (!headerTarget || this.expanded || this.minimized)) return;
+    if (headerTarget && event.target.closest("button, input, select, textarea, a")) return;
+    const key = minimizedTarget ? "minimized" : "compact";
+    const target = minimizedTarget || this.panel;
+    const rect = target.getBoundingClientRect();
+    this.positionDrag = {
+      key,
+      target,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: rect.left,
+      originY: rect.top,
+      moved: false,
+    };
+    target.setPointerCapture?.(event.pointerId);
+    this.root.classList.add("is-position-dragging");
+    event.preventDefault();
+  }
+
+  onPositionPointerMove(event) {
+    const drag = this.positionDrag;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    const deltaX = event.clientX - drag.startX;
+    const deltaY = event.clientY - drag.startY;
+    if (!drag.moved && Math.hypot(deltaX, deltaY) < 4) return;
+    drag.moved = true;
+    const rect = drag.target.getBoundingClientRect();
+    const position = clampFloatingPosition(
+      drag.originX + deltaX,
+      drag.originY + deltaY,
+      rect.width,
+      rect.height,
+      window.innerWidth,
+      window.innerHeight,
+    );
+    drag.target.style.left = `${position.x}px`;
+    drag.target.style.top = `${position.y}px`;
+    drag.target.style.right = "auto";
+    drag.target.style.bottom = "auto";
+    drag.target.style.transform = "none";
+    drag.position = position;
+    event.preventDefault();
+  }
+
+  onPositionPointerUp(event) {
+    const drag = this.positionDrag;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    drag.target.releasePointerCapture?.(event.pointerId);
+    this.positionDrag = null;
+    this.root.classList.remove("is-position-dragging");
+    if (!drag.moved || !drag.position) return;
+    this.positions[drag.key] = drag.position;
+    if (drag.key === "minimized") this.suppressRestoreClickUntil = performance.now() + 300;
+    void this.persistUiState({ positions: { [drag.key]: drag.position } });
+  }
+
+  handleViewportResize() {
+    const key = this.currentPositionKey();
+    if (!key || !this.positions[key]) return;
+    this.applyCurrentPosition();
+    this.scheduleUiPersist({ positions: { [key]: this.positions[key] } });
   }
 
   reconcileCards() {
@@ -411,6 +635,7 @@ class GalleryPanel {
     card.innerHTML = `
       <button type="button" class="nai-card-heart" data-action="favorite" aria-label="收藏" title="收藏" draggable="false">♡</button>
       <button type="button" class="nai-card-edit" data-action="edit" aria-label="编辑提示词" title="编辑提示词" draggable="false">✎</button>
+      <button type="button" class="nai-card-delete" data-action="delete" aria-label="删除图片" title="删除图片" draggable="false">×</button>
       <button type="button" class="nai-card-activate" aria-label="使用这张图片的提示词" draggable="false">
         <span class="nai-card-media">
           <span class="nai-image-loader">正在读取…</span>
@@ -575,6 +800,11 @@ class GalleryPanel {
       } else if (action === "expand" || action === "collapse") {
         if (action === "collapse" && !this.expanded) return;
         await this.toggleExpanded();
+      } else if (action === "minimize") {
+        this.setMinimized(true);
+      } else if (action === "restore") {
+        if (performance.now() < this.suppressRestoreClickUntil) return;
+        this.setMinimized(false);
       } else if (action === "switch-kind") {
         await this.switchKind(actionButton.dataset.kind);
       } else if (action === "favorite") {
@@ -583,6 +813,9 @@ class GalleryPanel {
       } else if (action === "edit") {
         const card = actionButton.closest(".nai-gallery-card");
         if (card) this.openItemEditor(card.dataset.itemId);
+      } else if (action === "delete") {
+        const card = actionButton.closest(".nai-gallery-card");
+        if (card) this.openDeleteConfirm(card.dataset.itemId);
       } else {
         await this.handleModalAction(action, actionButton);
       }
@@ -623,6 +856,13 @@ class GalleryPanel {
     await nextFrame();
     restoreScrollAnchor(this.scroll, anchor);
     this.scheduleUiPersist({ expanded: this.expanded });
+  }
+
+  setMinimized(minimized) {
+    if (this.minimized === minimized) return;
+    this.minimized = minimized;
+    this.renderPanelState();
+    void this.persistUiState({ minimized });
   }
 
   async switchKind(kind) {
@@ -666,7 +906,7 @@ class GalleryPanel {
   }
 
   onCardDragStart(event, id) {
-    if (event.target.closest(".nai-card-heart, .nai-card-edit")) {
+    if (event.target.closest(".nai-card-heart, .nai-card-edit, .nai-card-delete")) {
       event.preventDefault();
       return;
     }
@@ -817,17 +1057,15 @@ class GalleryPanel {
   onPageImageDragStart(event) {
     if (!this.active || this.host.contains(event.target)) return;
     const path = typeof event.composedPath === "function" ? event.composedPath() : [event.target];
-    const image = path.find((node) => node instanceof HTMLImageElement)
-      || event.target?.querySelector?.("img[src]");
-    if (!image) {
-      this.pageDragSource = null;
-      return;
-    }
-    const url = safeDraggedImageUrl(image.currentSrc || image.src);
-    this.pageDragSource = url ? {
-      url,
-      name: image.getAttribute("download") || image.alt || image.title || "novelai-image",
-    } : null;
+    const pointElements = event.target?.ownerDocument?.elementsFromPoint?.(event.clientX, event.clientY) || [];
+    this.pageDragSource = [...path, ...pointElements]
+      .map(extractElementImageSource)
+      .find(Boolean) || null;
+    queueMicrotask(() => {
+      if (this.pageDragSource) return;
+      const [url] = extractDraggedImageUrls(event.dataTransfer);
+      if (url) this.pageDragSource = { url, name: "novelai-history-image" };
+    });
   }
 
   onPageDragEnd() {
@@ -847,7 +1085,9 @@ class GalleryPanel {
       || types.includes("Files")
       || types.includes("text/uri-list")
       || types.includes("text/html")
-      || types.includes("DownloadURL"),
+      || types.includes("text/plain")
+      || types.includes("DownloadURL")
+      || types.some((type) => /image|novelai|nai/iu.test(type)),
     );
   }
 
@@ -967,13 +1207,14 @@ class GalleryPanel {
     this.showLoadingModal("正在读取原图和 metadata…");
     try {
       const buffer = await file.arrayBuffer();
-      const [hash, dataUrl, snapshot] = await Promise.all([
+      const [hash, dataUrl, metadata] = await Promise.all([
         sha256Blob(buffer),
         blobToDataUrl(buffer, file.type),
-        Promise.resolve(collectAllPrompts())
+        Promise.resolve(extractImageMetadata(buffer, file.type)),
       ]);
-      const metadata = await extractImageMetadata(buffer, file.type);
-      this.pendingImport = { file, kind, hash, dataUrl, snapshot, metadata };
+      const snapshot = metadata.hasNovelAiMetadata ? null : collectAllPrompts();
+      const promptResolution = resolveImportPromptSource(metadata, snapshot, kind);
+      this.pendingImport = { file, kind, hash, dataUrl, snapshot, metadata, promptResolution };
       this.openImportEditor();
     } catch (error) {
       this.toast(error.message || "图片读取失败", "error");
@@ -988,10 +1229,13 @@ class GalleryPanel {
     form.className = "nai-editor-form";
     form.addEventListener("submit", (event) => event.preventDefault());
 
-    const snapshotText = formatPromptSnapshot(pending.snapshot);
+    const usesMetadata = pending.promptResolution?.source === "metadata";
+    const snapshotText = usesMetadata
+      ? pending.metadata?.prompt || "（检测到 NovelAI metadata，但没有可识别的正向提示词）"
+      : formatPromptSnapshot(pending.snapshot);
     form.innerHTML = `
       <section class="nai-prompt-snapshot">
-        <div class="nai-section-heading"><strong>NovelAI 当前全部提示词</strong><span>包含正向与角色提示</span></div>
+        <div class="nai-section-heading"><strong></strong><span></span></div>
         <textarea name="snapshot" readonly></textarea>
         <div class="nai-inline-actions">
           <button type="button" class="nai-secondary" data-action="copy-snapshot">复制全部</button>
@@ -1008,14 +1252,20 @@ class GalleryPanel {
       <div class="nai-form-error" hidden></div>
     `;
     form.elements.snapshot.value = snapshotText;
+    const snapshotHeading = form.querySelector(".nai-section-heading strong");
+    const snapshotDescription = form.querySelector(".nai-section-heading span");
+    snapshotHeading.textContent = usesMetadata ? "图片内置 NovelAI 提示词" : "当前 NovelAI 页面提示词";
+    snapshotDescription.textContent = usesMetadata ? "优先来源：图片 metadata" : "回退来源：当前页面";
+    form.querySelector('[data-action="copy-snapshot"]').textContent = usesMetadata ? "复制 metadata 提示词" : "复制全部";
+    form.querySelector('[data-action="copy-snapshot"]').hidden = usesMetadata && !pending.metadata?.prompt;
+    form.querySelector('[data-action="refresh-snapshot"]').hidden = usesMetadata;
+    form.querySelector('[data-action="use-snapshot"]').hidden = usesMetadata;
     form.elements.kind.value = pending.kind;
     form.elements.title.value = baseName(pending.file.name);
-    form.elements.actionPrompt.value = pending.metadata?.prompt || "";
+    form.elements.actionPrompt.value = pending.promptResolution?.prompt || "";
     const metaSummary = form.querySelector(".nai-metadata-summary");
-    metaSummary.classList.toggle("has-metadata", Boolean(pending.metadata?.hasMetadata));
-    metaSummary.textContent = pending.metadata?.hasMetadata
-      ? `✓ 检测到原图 metadata · SHA-256 ${pending.hash.slice(0, 12)}…`
-      : `未检测到可识别的提示词 metadata；原始字节仍会完整保存 · SHA-256 ${pending.hash.slice(0, 12)}…`;
+    metaSummary.classList.toggle("has-metadata", usesMetadata);
+    metaSummary.textContent = `${pending.promptResolution?.message || "提示词来源尚未确定"} · SHA-256 ${pending.hash.slice(0, 12)}…`;
     modal.body.append(form);
     modal.footer.innerHTML = `
       <button type="button" class="nai-secondary" data-action="cancel-import">取消这张</button>
@@ -1047,6 +1297,22 @@ class GalleryPanel {
     modal.footer.innerHTML = `
       <button type="button" class="nai-secondary" data-action="close-modal">取消</button>
       <button type="button" class="nai-primary" data-action="save-edit">保存修改</button>
+    `;
+    this.showModal(modal.element);
+  }
+
+  openDeleteConfirm(id) {
+    const item = this.getItem(id);
+    if (!item) return;
+    const modal = this.createModal("删除这张图片？", "此操作会从图库和本地 images 文件夹中删除该图片。", "nai-delete-modal");
+    modal.element.dataset.itemId = id;
+    const warning = document.createElement("p");
+    warning.className = "nai-delete-warning";
+    warning.textContent = `即将永久删除“${item.title || baseName(item.originalName)}”。删除后无法通过插件撤销。`;
+    modal.body.append(warning);
+    modal.footer.innerHTML = `
+      <button type="button" class="nai-secondary" data-action="close-modal">取消</button>
+      <button type="button" class="nai-danger-button" data-action="confirm-delete">确认删除</button>
     `;
     this.showModal(modal.element);
   }
@@ -1143,12 +1409,19 @@ class GalleryPanel {
       }
       this.toast("当前提示词已复制", "success");
     } else if (action === "refresh-snapshot") {
+      if (this.pendingImport?.promptResolution?.source === "metadata") return;
       const snapshot = await Promise.resolve(collectAllPrompts());
       this.pendingImport.snapshot = snapshot;
+      this.pendingImport.promptResolution = resolveImportPromptSource(this.pendingImport.metadata, snapshot, this.pendingImport.kind);
       this.modalLayer.querySelector('[name="snapshot"]').value = formatPromptSnapshot(snapshot);
       this.toast("已重新读取当前提示词", "success");
     } else if (action === "use-snapshot") {
       const form = this.modalLayer.querySelector("form");
+      if (this.pendingImport?.promptResolution?.source === "metadata") {
+        form.elements.actionPrompt.value = this.pendingImport.metadata?.prompt || "";
+        form.elements.actionPrompt.focus();
+        return;
+      }
       const selection = selectSnapshotActionPrompt(this.pendingImport?.snapshot, form.elements.kind.value);
       if (!selection.ok) {
         this.toast(selection.message, "warning");
@@ -1160,6 +1433,36 @@ class GalleryPanel {
       await this.savePendingImport(button);
     } else if (action === "save-edit") {
       await this.saveItemEdit(button);
+    } else if (action === "confirm-delete") {
+      await this.deleteItem(button);
+    }
+  }
+
+  async deleteItem(button) {
+    const modal = this.modalLayer.querySelector(".nai-delete-modal");
+    const id = modal?.dataset.itemId;
+    if (!id || !this.getItem(id)) return;
+    const anchor = captureScrollAnchor(this.scroll);
+    const operationGeneration = this.reloadGeneration;
+    const operationDirectoryKey = this.directoryKey;
+    setButtonBusy(button, true, "删除中…");
+    try {
+      const result = await storage.deleteItem(id);
+      if (!this.isOperationCurrent(operationGeneration, operationDirectoryKey)) {
+        this.closeModal();
+        await this.reload({ preserveScroll: true });
+        return;
+      }
+      this.evictFile(id);
+      this.manifest = normalizeManifest(result?.manifest ?? result);
+      this.closeModal();
+      this.reconcileCards();
+      await nextFrame();
+      restoreScrollAnchor(this.scroll, anchor);
+      this.toast(result?.warning || "图片已从图库和本地目录中删除", result?.warning ? "warning" : "success");
+    } catch (error) {
+      this.toast(error.message || "图片删除失败", "error");
+      setButtonBusy(button, false);
     }
   }
 
@@ -1192,6 +1495,7 @@ class GalleryPanel {
         sha256: pending.hash,
         metadata: {
           hasMetadata: Boolean(pending.metadata?.hasMetadata),
+          hasNovelAiMetadata: Boolean(pending.metadata?.hasNovelAiMetadata),
           prompt: pending.metadata?.prompt || "",
           summary: pending.metadata?.summary || ""
         }
@@ -1268,7 +1572,10 @@ class GalleryPanel {
       ...patch,
       ...(patch.scroll ? {
         scroll: { ...(this.pendingUiPatch.scroll || {}), ...patch.scroll }
-      } : {})
+      } : {}),
+      ...(patch.positions ? {
+        positions: { ...(this.pendingUiPatch.positions || {}), ...patch.positions }
+      } : {}),
     };
     this.persistUiDebounced();
   }
@@ -1324,6 +1631,10 @@ class GalleryPanel {
     window.removeEventListener("dragover", this.onWindowExternalDragCapture, true);
     window.removeEventListener("drop", this.onWindowExternalDragCapture, true);
     window.removeEventListener("dragend", this.onPageDragEnd, true);
+    window.removeEventListener("pointermove", this.onPositionPointerMove, true);
+    window.removeEventListener("pointerup", this.onPositionPointerUp, true);
+    window.removeEventListener("pointercancel", this.onPositionPointerUp, true);
+    window.removeEventListener("resize", this.handleViewportResize);
     this.imageObserver?.disconnect();
     this.clearFileCache();
     this.root.remove();

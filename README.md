@@ -17,8 +17,10 @@ It runs as an unpacked Microsoft Edge extension. No build step or companion appl
 - A web image is imported only when dropped inside the extension panel; drops elsewhere remain handled by NovelAI.
 - Preserve original image bytes and existing PNG/WebP metadata without re-encoding.
 - Verify imported files with SHA-256 before and after writing.
-- Favorite, reorder, rename, recategorize, and edit saved prompts.
+- Favorite, reorder, rename, recategorize, edit, and delete saved items.
 - Compact and expanded gallery layouts.
+- Minimize the panel to a tiny draggable icon and freely reposition the normal panel.
+- Persist the normal-panel and minimized-icon positions across reloads and browser restarts.
 - Lazy image loading, limited concurrency, and an LRU cache for larger libraries.
 
 ## Requirements
@@ -148,6 +150,13 @@ The import editor can show:
 - a prompt extracted from image metadata;
 - a short SHA-256 digest.
 
+Prompt sources follow a strict priority order:
+
+1. If the image contains recognizable **NovelAI metadata**, the saved prompt is taken from the image metadata. The current webpage prompt is not used.
+2. Only when recognizable NovelAI metadata is absent does the extension use the current NovelAI page prompt as a fallback source.
+
+If NovelAI metadata is present but does not contain a recognizable positive prompt, the extension leaves the saved prompt empty for manual review instead of silently mixing in the current webpage prompt. The editor always labels the active source as either **Image metadata** or **Current page fallback**.
+
 The `【Main Prompt】` and `【Character 1】`-style labels in the snapshot are display headings only; they are never saved as executable prompt text.
 
 When **Fill below** is used:
@@ -179,9 +188,26 @@ Open the **Character** tab and click a card. Its saved tags are copied to the sy
 
 Click the pencil button on a card to edit its category, display name, or saved prompt. Editing changes only `library.json`; it does not modify or re-encode the image.
 
+### Deleting
+
+Click the red `×` button on a card to open a confirmation dialog. Confirming removes the item from `library.json`, its ordering entries, and the corresponding original file in `images/`.
+
+Deletion cannot be undone through the extension. Back up the data directory if the image may be needed later.
+
 ### Dragging an image back to NovelAI
 
 Drag a gallery card to a NovelAI image target to pass the saved original file back to the page. Any metadata originally present in that file remains intact.
+
+### Minimizing and moving the panel
+
+- Click the `−` button immediately to the left of the expand button to collapse the gallery into a small `✦` icon.
+- Click the small icon to restore the panel.
+- Drag the small icon directly to move it.
+- Drag the normal panel by an empty area of its header to move it.
+- The expanded large panel is fixed in the center and cannot be dragged.
+- The normal-panel and small-icon positions are saved separately in `library.json` and survive page reloads and browser restarts.
+
+To restore the default lower-right position, open the extension settings and click **Reset panel position**. This also returns the gallery to the normal, non-expanded state.
 
 ## Panel controls
 
@@ -189,9 +215,11 @@ Drag a gallery card to a NovelAI image target to pass the saved original file ba
 | --- | --- |
 | `＋` | Import images from the computer |
 | Gear | Open data directory settings |
+| `−` | Collapse the panel into a small floating icon |
 | Expand icon | Switch between compact and expanded layouts |
 | Heart | Favorite or unfavorite a card |
 | Pencil | Edit category, name, or prompt |
+| Red `×` | Permanently delete the item and its local image |
 
 ## Images and metadata
 
@@ -200,6 +228,7 @@ Drag a gallery card to a NovelAI image target to pass the saved original file ba
 - Images are stored without thumbnail re-encoding.
 - SHA-256 is verified after each image write.
 - Existing metadata is preserved because the original file bytes are retained.
+- Recognizable NovelAI metadata has priority over the live webpage prompt during import.
 - Screenshots, clipboard images, and converted files may not contain the original generation metadata; the extension cannot recreate metadata that is not present in the source file.
 - Abnormally large metadata is marked as too large to parse, while the original image can still be preserved.
 
@@ -231,6 +260,7 @@ Updating the extension code does not delete the selected data directory.
 - Confirm that the extension is enabled.
 - Reload the extension and refresh NovelAI.
 - Approve any Edge prompt requesting access to the NovelAI site.
+- If the panel or minimized icon was moved to an inconvenient location, use **Reset panel position** in the extension settings.
 
 ### The data directory needs authorization
 

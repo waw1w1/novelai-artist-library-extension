@@ -53,7 +53,7 @@ export async function mountNovelAiGallery() {
   }, 750);
 
   const reloadOnDirectoryChange = (message) => {
-    if (message?.type === "DIRECTORY_CHANGED" && active) api.reload({ preserveScroll: true });
+    if (message?.type === "DIRECTORY_CHANGED" && active) api.reload({ preserveScroll: true, reloadUiState: true });
   };
   chrome.runtime.onMessage.addListener(reloadOnDirectoryChange);
 

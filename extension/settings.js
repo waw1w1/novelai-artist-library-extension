@@ -8,7 +8,9 @@ import {
   testWritableDirectory,
   withLibraryReadLock,
   withLibraryWriteLock,
+  writeLibrary,
 } from "./src/directory-db.js";
+import { resetFloatingUiState } from "./src/core.js";
 
 const elements = {
   permissionBadge: document.querySelector("#permission-badge"),
@@ -22,6 +24,7 @@ const elements = {
   chooseLabel: document.querySelector("#choose-label"),
   authorizeButton: document.querySelector("#authorize-directory"),
   verifyButton: document.querySelector("#verify-directory"),
+  resetPositionButton: document.querySelector("#reset-panel-position"),
   operationStatus: document.querySelector("#operation-status"),
 };
 
@@ -43,6 +46,7 @@ function setBusy(nextBusy) {
   elements.chooseButton.disabled = nextBusy;
   elements.authorizeButton.disabled = nextBusy;
   elements.verifyButton.disabled = nextBusy;
+  elements.resetPositionButton.disabled = nextBusy;
 }
 
 function formatDate(value) {
@@ -101,6 +105,7 @@ async function refreshView({ preserveMessage = false } = {}) {
   resetStats();
   elements.authorizeButton.hidden = true;
   elements.verifyButton.hidden = true;
+  elements.resetPositionButton.hidden = true;
 
   try {
     currentRecord = await getDirectoryRecord();
@@ -164,6 +169,7 @@ async function refreshView({ preserveMessage = false } = {}) {
       return;
     }
     showStats(library);
+    elements.resetPositionButton.hidden = false;
     if (!preserveMessage) {
       setOperationStatus("目录和清单均可正常访问。", "success");
     }
@@ -325,9 +331,31 @@ async function verifyCurrentDirectory() {
   }
 }
 
+async function resetPanelPosition() {
+  if (busy || !currentRecord?.handle) return;
+  setBusy(true);
+  try {
+    const permission = await queryDirectoryPermission(currentRecord.handle, "readwrite");
+    if (permission !== "granted") throw new Error("数据目录需要先重新授权");
+    await withLibraryWriteLock(async () => {
+      const library = await readLibrary(currentRecord.handle);
+      if (!library) throw new Error("数据目录中缺少 library.json");
+      library.ui = resetFloatingUiState(library.ui);
+      await writeLibrary(currentRecord.handle, library);
+    });
+    await announceDirectoryChange(currentRecord);
+    setOperationStatus("面板和小图标已恢复到默认右下角位置。", "success");
+  } catch (error) {
+    setOperationStatus(`重置面板位置失败：${error.message || "未知错误"}`, "danger");
+  } finally {
+    setBusy(false);
+  }
+}
+
 elements.chooseButton.addEventListener("click", chooseDirectory);
 elements.authorizeButton.addEventListener("click", authorizeDirectory);
 elements.verifyButton.addEventListener("click", verifyCurrentDirectory);
+elements.resetPositionButton.addEventListener("click", resetPanelPosition);
 
 if (typeof window.showDirectoryPicker !== "function") {
   elements.chooseButton.disabled = true;

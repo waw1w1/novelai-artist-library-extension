@@ -171,6 +171,7 @@ test("解析 PNG tEXt/iTXt 并提取 NovelAI 正向提示词和摘要", () => {
 
   const metadata = extractImageMetadata(bytes.buffer, "image/png");
   assert.equal(metadata.hasMetadata, true);
+  assert.equal(metadata.hasNovelAiMetadata, true);
   assert.equal(metadata.prompt, "artist:test, 1girl, 星空");
   assert.match(metadata.summary, /NovelAI/u);
   assert.match(metadata.summary, /Seed 123456/u);
@@ -183,6 +184,7 @@ test("解析 WebP EXIF ImageDescription 提示词", () => {
   const metadata = extractImageMetadata(bytes, "image/webp");
 
   assert.equal(metadata.hasMetadata, true);
+  assert.equal(metadata.hasNovelAiMetadata, false, "普通 WebP EXIF 不应被误判为 NovelAI metadata");
   assert.equal(metadata.prompt, "artist:webp, 1boy");
   assert.equal(metadata.rawEntries[0].type, "EXIF");
   assert.equal(metadata.rawEntries[0].keyword, "ImageDescription");
@@ -199,6 +201,7 @@ test("无 metadata 与截断 PNG 均安全返回", () => {
   );
   assert.deepEqual(noMetadata, {
     hasMetadata: false,
+    hasNovelAiMetadata: false,
     prompt: "",
     summary: "未检测到图片元数据",
     rawEntries: [],

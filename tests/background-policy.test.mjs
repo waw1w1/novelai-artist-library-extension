@@ -26,8 +26,9 @@ test("后台只接受自有条目属性，拒绝 Object.prototype 名称", () =>
 test("后台限制标题、提示词与 metadata 长度和结构", () => {
   assert.equal(requireBoundedString("标题", "title", 100), "标题");
   assert.throws(() => requireBoundedString("x".repeat(101), "title", 100), (error) => error.code === "PAYLOAD_TOO_LARGE");
-  assert.deepEqual(normalizeMetadata({ hasMetadata: true, prompt: "p", summary: "s", ignored: "x" }), {
+  assert.deepEqual(normalizeMetadata({ hasMetadata: true, hasNovelAiMetadata: true, prompt: "p", summary: "s", ignored: "x" }), {
     hasMetadata: true,
+    hasNovelAiMetadata: true,
     prompt: "p",
     summary: "s",
   });
@@ -37,12 +38,16 @@ test("后台限制标题、提示词与 metadata 长度和结构", () => {
   );
 });
 
-test("UI 状态使用严格白名单并限制滚动值", () => {
-  assert.deepEqual(validateUiPatch({ activeKind: "character", expanded: true, scroll: { artist: 123 } }), {
+test("UI 状态使用严格白名单并限制滚动值和悬浮位置", () => {
+  assert.deepEqual(validateUiPatch({ activeKind: "character", expanded: true, minimized: true, positions: { compact: { x: 320, y: 240 } }, scroll: { artist: 123 } }), {
     activeKind: "character",
     expanded: true,
+    minimized: true,
+    positions: { compact: { x: 320, y: 240 } },
     scroll: { artist: 123 },
   });
   assert.throws(() => validateUiPatch({ arbitrary: { nested: true } }), (error) => error.code === "UI_STATE_INVALID");
   assert.throws(() => validateUiPatch({ scroll: { artist: -1 } }), (error) => error.code === "UI_STATE_INVALID");
+  assert.throws(() => validateUiPatch({ positions: { expanded: { x: 1, y: 1 } } }), (error) => error.code === "UI_STATE_INVALID");
+  assert.throws(() => validateUiPatch({ positions: { minimized: { x: -1, y: 1 } } }), (error) => error.code === "UI_STATE_INVALID");
 });

@@ -786,6 +786,46 @@ function extractPromptAndSettings(entries) {
   return { prompt: candidates[0]?.text || "", settings };
 }
 
+function hasNovelAiJsonSignature(value) {
+  if (!value || typeof value !== "object") return false;
+  const keys = new Set();
+  const queue = [value];
+  let visited = 0;
+  while (queue.length && visited < MAX_JSON_NODES) {
+    const current = queue.shift();
+    if (!current || typeof current !== "object") continue;
+    visited += 1;
+    for (const [key, child] of Object.entries(current)) {
+      keys.add(normalizedKey(key));
+      if (child && typeof child === "object") queue.push(child);
+    }
+  }
+  const hasPrompt = keys.has("prompt") || keys.has("positiveprompt") || keys.has("basecaption");
+  const novelAiKeys = [
+    "uc",
+    "paramsversion",
+    "uncondscale",
+    "nsamples",
+    "noiseschedule",
+    "legacyv3extend",
+    "skipcfgabovesigma",
+  ];
+  return hasPrompt && novelAiKeys.some((key) => keys.has(key));
+}
+
+function detectNovelAiMetadata(entries) {
+  for (const entry of entries) {
+    if (!entry.text) continue;
+    const keyword = normalizedKey(entry.keyword || "");
+    if ((keyword === "software" || keyword === "source") && /novelai/iu.test(entry.text)) {
+      return true;
+    }
+    const parsed = tryParseJson(entry.text);
+    if (parsed && hasNovelAiJsonSignature(parsed)) return true;
+  }
+  return false;
+}
+
 function buildSummary(format, entries, prompt, settings) {
   if (!entries.length) {
     return "未检测到图片元数据";
@@ -852,8 +892,10 @@ export function extractImageMetadata(arrayBuffer, mimeType = "") {
   const extracted = extractPromptAndSettings(rawEntries);
   const prompt = Array.from(extracted.prompt).slice(0, MAX_PROMPT_CHARACTERS).join("");
   const { settings } = extracted;
+  const hasNovelAiMetadata = detectNovelAiMetadata(rawEntries);
   return {
     hasMetadata: rawEntries.length > 0,
+    hasNovelAiMetadata,
     prompt,
     summary: buildSummary(format, rawEntries, prompt, settings),
     rawEntries,

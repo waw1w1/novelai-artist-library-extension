@@ -9,6 +9,7 @@ import {
   openOrCreateLibrary,
   readImageFile,
   readLibrary,
+  removeImageFile,
   sha256Hex,
   testWritableDirectory,
   withLibraryReadLock,
@@ -237,6 +238,8 @@ test("新目录会建立 images/ 与完整清单，并可写回后读取", async
   assert.equal(root.directories.has(IMAGES_DIRECTORY_NAME), true);
   assert.equal(root.files.has(LIBRARY_FILE_NAME), true);
   assert.deepEqual(opened.manifest, createEmptyLibrary());
+  assert.equal(opened.manifest.ui.minimized, false);
+  assert.deepEqual(opened.manifest.ui.positions, {});
 
   opened.manifest.items.artistA = {
     id: "artistA",
@@ -307,6 +310,15 @@ test("图片流写入或关闭失败也会删除已创建的孤立文件", async
     await assert.rejects(writeImageVerified(root, name, Uint8Array.of(1, 2, 3), null));
     assert.equal(images.files.has(name), false, `${name} 应被清理`);
   }
+});
+
+test("删除图片文件成功，并允许重复删除不存在的文件", async () => {
+  const root = new MemoryDirectoryHandle();
+  const images = await root.getDirectoryHandle(IMAGES_DIRECTORY_NAME, { create: true });
+  images.seedFile("delete-me.png", Uint8Array.of(1, 2, 3));
+  await removeImageFile(root, "delete-me.png");
+  assert.equal(images.files.has("delete-me.png"), false);
+  await assert.doesNotReject(removeImageFile(root, "delete-me.png"));
 });
 
 test("打开已有库只读取和规范化，不重写用户的 library.json", async () => {

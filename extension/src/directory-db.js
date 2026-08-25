@@ -172,6 +172,8 @@ export function createEmptyLibrary() {
     ui: {
       activeKind: "artist",
       expanded: false,
+      minimized: false,
+      positions: {},
       scroll: {
         artist: 0,
         character: 0,

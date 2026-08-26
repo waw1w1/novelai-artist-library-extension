@@ -215,7 +215,9 @@ Deletion cannot be undone through the extension. Back up the data directory if t
 
 ### Dragging an image back to NovelAI
 
-Drag a gallery card to a NovelAI image target to pass the saved original file back to the page. Any metadata originally present in that file remains intact.
+Drag a gallery card out of the panel and drop it on NovelAI to pass the saved original file directly to NovelAI's current image input. The extension uses the original `File` bytes without Canvas rendering, downloading, or re-encoding, so any metadata originally present in that file remains intact and can be imported by NovelAI.
+
+Dropping the card inside the panel still reorders it within its current favorite or normal section. Dropping it outside the panel switches to the NovelAI import action and does not change gallery ordering.
 
 ### Minimizing and moving the panel
 

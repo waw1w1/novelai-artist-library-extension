@@ -53,6 +53,7 @@ const ENGLISH = Object.freeze({
   "收藏状态保存失败": "Failed to save favorite state",
   "图片仍在准备，请稍后再拖": "The image is still loading; try dragging it again shortly",
   "当前浏览器未能准备拖出文件": "The browser could not prepare the file for dragging",
+  "已将带原始 metadata 的图片交给 NovelAI": "The original image with its metadata was passed to NovelAI",
   "排序保存失败": "Failed to save ordering",
   "请先在设置中检查或重新授权数据目录": "Check or reauthorize the data directory in Settings",
   "请先在设置中选择项目内的数据目录": "Select a data directory in Settings first",

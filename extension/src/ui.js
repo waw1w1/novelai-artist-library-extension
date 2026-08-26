@@ -160,6 +160,48 @@ export function isPointInsideRect(clientX, clientY, rect) {
     && clientY >= rect.top && clientY <= rect.bottom;
 }
 
+function hasRenderedAncestor(element) {
+  let current = element?.parentElement || null;
+  while (current) {
+    const rect = current.getBoundingClientRect?.();
+    if (rect && rect.width > 0 && rect.height > 0) return true;
+    current = current.parentElement;
+  }
+  return false;
+}
+
+export function selectNovelAiImageInput(inputs, extensionHost = null) {
+  const candidates = Array.from(inputs || []).filter((input) => (
+    input
+    && String(input.type || "").toLowerCase() === "file"
+    && !input.disabled
+    && !extensionHost?.contains?.(input)
+    && (!input.accept || /image|png|jpe?g|webp|gif|avif/iu.test(input.accept))
+  ));
+  return candidates.find(hasRenderedAncestor) || candidates[0] || null;
+}
+
+export function assignOriginalFileToInput(
+  input,
+  file,
+  DataTransferConstructor = globalThis.DataTransfer,
+  EventConstructor = globalThis.Event,
+) {
+  if (!input || !file || typeof DataTransferConstructor !== "function" || typeof EventConstructor !== "function") {
+    return false;
+  }
+  try {
+    const transfer = new DataTransferConstructor();
+    const addedFile = transfer.items.add(file);
+    if (!addedFile || transfer.files.length !== 1) return false;
+    input.files = transfer.files;
+    input.dispatchEvent(new EventConstructor("change", { bubbles: true, composed: true }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function clampFloatingPosition(x, y, width, height, viewportWidth, viewportHeight, margin = 8) {
   const safeWidth = Math.max(0, Number(width) || 0);
   const safeHeight = Math.max(0, Number(height) || 0);
@@ -1218,6 +1260,9 @@ class GalleryPanel {
     if (this.dragState && Array.from(event.dataTransfer?.types || []).includes("Files")) {
       // 在冒泡阶段兜底防止浏览器导航；NovelAI 的目标监听器会先收到事件。
       if (!event.defaultPrevented) event.preventDefault();
+      if (!this.isPointInsidePanel(event) && event.dataTransfer) {
+        event.dataTransfer.dropEffect = "copy";
+      }
     }
   }
 
@@ -1259,7 +1304,24 @@ class GalleryPanel {
   }
 
   onWindowExternalDragCapture(event) {
-    if (!this.active || this.dragState || !this.isPointInsidePanel(event) || !this.hasExternalImagePayload(event.dataTransfer)) return;
+    if (!this.active) return;
+    if (this.dragState) {
+      if (this.isPointInsidePanel(event)) return;
+      if (event.type === "dragover") {
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+        return;
+      }
+
+      const file = this.fileCache.get(this.dragState.id)?.file;
+      if (!file || !this.offerOriginalFileToNovelAi(file)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.clearDragVisuals();
+      this.toast("已将带原始 metadata 的图片交给 NovelAI", "success");
+      return;
+    }
+    if (!this.isPointInsidePanel(event) || !this.hasExternalImagePayload(event.dataTransfer)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
@@ -1285,6 +1347,11 @@ class GalleryPanel {
       return;
     }
     void this.importDraggedPageImage(urls, source);
+  }
+
+  offerOriginalFileToNovelAi(file) {
+    const input = selectNovelAiImageInput(document.querySelectorAll('input[type="file"]'), this.host);
+    return assignOriginalFileToInput(input, file);
   }
 
   async importDraggedPageImage(urls, source) {

@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  assignOriginalFileToInput,
   clampFloatingPosition,
   draggedImageFileName,
   extractElementImageSource,
   extractDraggedImageUrls,
   isPointInsideRect,
   resolveImportPromptSource,
+  selectNovelAiImageInput,
 } from "../extension/src/ui.js";
 import { buildPromptSnapshot } from "../extension/src/novelai.js";
 
@@ -84,6 +86,52 @@ test("只有落点位于面板内部时才进入插件拖放处理范围", () =>
   assert.equal(isPointInsideRect(899, 500, panelRect), false, "NovelAI 左侧区域不得被插件接管");
   assert.equal(isPointInsideRect(1000, 250, panelRect), false, "NovelAI 上方区域不得被插件接管");
   assert.equal(isPointInsideRect(500, 500, panelRect), false, "NovelAI 主画布不得被插件接管");
+});
+
+test("拖回 NovelAI 时选择可见图片入口并排除扩展自己的文件控件", () => {
+  const renderedParent = { parentElement: null, getBoundingClientRect: () => ({ width: 360, height: 68 }) };
+  const hiddenParent = { parentElement: null, getBoundingClientRect: () => ({ width: 0, height: 0 }) };
+  const hiddenNovelAiInput = { type: "file", disabled: false, accept: "", parentElement: hiddenParent };
+  const visibleNovelAiInput = { type: "file", disabled: false, accept: "image/png", parentElement: renderedParent };
+  const extensionInput = { type: "file", disabled: false, accept: "image/*", parentElement: renderedParent };
+  const extensionHost = { contains: (input) => input === extensionInput };
+
+  assert.equal(
+    selectNovelAiImageInput([hiddenNovelAiInput, extensionInput, visibleNovelAiInput], extensionHost),
+    visibleNovelAiInput,
+  );
+  assert.equal(selectNovelAiImageInput([{ type: "file", disabled: true }]), null);
+});
+
+test("交给 NovelAI 文件入口的是同一个原始 File，不经过重新编码", () => {
+  const originalFile = { name: "metadata.png", bytes: Uint8Array.of(1, 2, 3, 4) };
+  let dispatchedEvent = null;
+  const input = {
+    files: [],
+    dispatchEvent(event) { dispatchedEvent = event; return true; },
+  };
+  class FakeDataTransfer {
+    constructor() {
+      this.files = [];
+      this.items = {
+        add: (file) => {
+          this.files.push(file);
+          return { kind: "file", type: "image/png" };
+        },
+      };
+    }
+  }
+  class FakeEvent {
+    constructor(type, options) {
+      this.type = type;
+      this.options = options;
+    }
+  }
+
+  assert.equal(assignOriginalFileToInput(input, originalFile, FakeDataTransfer, FakeEvent), true);
+  assert.equal(input.files[0], originalFile);
+  assert.equal(dispatchedEvent.type, "change");
+  assert.deepEqual(dispatchedEvent.options, { bubbles: true, composed: true });
 });
 
 test("悬浮面板和小图标位置始终限制在浏览器可视区域", () => {
